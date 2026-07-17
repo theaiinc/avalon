@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 env:
   PYTHON_VERSION: "3.11"
@@ -33,7 +34,7 @@ jobs:
             arch: x64
             runner: ubuntu-22.04
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 20
+    timeout-minutes: 15
     defaults:
       run:
         shell: bash
@@ -107,6 +108,24 @@ jobs:
             frontend/dist/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
+
+  watchdog:
+    name: Cancel stalled release
+    runs-on: ubuntu-22.04
+    timeout-minutes: 17
+    steps:
+      - name: Cancel if the workflow stalls
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for _ in $(seq 1 30); do
+            status="$(gh run view "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --json status --jq '.status')"
+            if [ "$status" = "completed" ]; then
+              exit 0
+            fi
+            sleep 30
+          done
+          gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY"
 
   release:
     name: Publish GitHub release
