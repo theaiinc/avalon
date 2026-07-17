@@ -1,0 +1,157 @@
+name: Avalon cross-platform release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  PYTHON_VERSION: "3.11"
+  NODE_VERSION: "20"
+
+jobs:
+  package:
+    name: Package ${{ matrix.platform }}-${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos
+            arch: arm64
+            runner: macos-14
+          - platform: macos
+            arch: x64
+            runner: macos-13
+          - platform: windows
+            arch: x64
+            runner: windows-2022
+          - platform: linux
+            arch: x64
+            runner: ubuntu-22.04
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Python sidecar dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r backend/requirements.txt pyinstaller
+
+      - name: Build native Python sidecars
+        run: python packaging/build_sidecars.py
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build Electron artifacts
+        working-directory: frontend
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: npm run dist
+
+      - name: Verify platform artifacts
+        working-directory: frontend/dist
+        run: |
+          case "${{ matrix.platform }}" in
+            macos) test -n "$(find . -maxdepth 1 -type f \( -name '*.dmg' -o -name '*.zip' \) -print -quit)" ;;
+            windows) test -n "$(find . -maxdepth 1 -type f \( -name '*.exe' -o -name '*.zip' \) -print -quit)" ;;
+            linux) test -n "$(find . -maxdepth 1 -type f \( -name '*.AppImage' -o -name '*.tar.gz' \) -print -quit)" ;;
+          esac
+
+      - name: Generate checksums
+        working-directory: frontend/dist
+        run: |
+          python - <<'PY'
+          import hashlib
+          from pathlib import Path
+          files = sorted(path for path in Path(".").iterdir() if path.is_file())
+          Path("SHA256SUMS.txt").write_text("".join(
+              f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n"
+              for path in files
+              if path.name != "SHA256SUMS.txt"
+          ))
+          PY
+
+      - name: Upload platform artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: avalon-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            frontend/dist/*.dmg
+            frontend/dist/*.zip
+            frontend/dist/*.exe
+            frontend/dist/*.AppImage
+            frontend/dist/*.tar.gz
+            frontend/dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish GitHub release
+    needs: package
+    runs-on: ubuntu-22.04
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Download packaged artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          pattern: avalon-*
+          merge-multiple: true
+
+      - name: Create release manifest
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path("release-assets")
+          entries = []
+          for path in sorted(root.iterdir()):
+              if not path.is_file() or path.name == "release-manifest.json":
+                  continue
+              entries.append({
+                  "artifact": path.name,
+                  "bytes": path.stat().st_size,
+                  "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+              })
+          (root / "release-manifest.json").write_text(json.dumps({
+              "version": os.environ["GITHUB_REF_NAME"],
+              "artifacts": entries,
+          }, indent=2) + "\n")
+          PY
+
+      - name: Publish release and downloads
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*
+          generate_release_notes: true
+          body: |
+            Avalon desktop builds include the Electron application and native Python sidecars.
+
+            Model weights are not bundled. Download models after installation; they are stored in the platform app-data directory.
