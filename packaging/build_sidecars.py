@@ -9,7 +9,6 @@ from __future__ import annotations
 import shutil
 import subprocess
 import sys
-from importlib.util import find_spec
 from pathlib import Path
 
 
@@ -20,22 +19,6 @@ WORK = ROOT / ".build" / "pyinstaller"
 
 
 def build(name: str, script: str) -> None:
-    if sys.platform == "darwin":
-        # OpenVINO wheels ship dylibs with signatures that Apple's codesign
-        # subsystem may reject when PyInstaller re-signs the collected copy.
-        # Remove those wheel signatures first; PyInstaller will apply its
-        # ad-hoc signature to the clean copies it embeds.
-        openvino_spec = find_spec("openvino")
-        if openvino_spec and openvino_spec.submodule_search_locations:
-            for root in openvino_spec.submodule_search_locations:
-                for library in Path(root).rglob("*.dylib"):
-                    subprocess.run(
-                        ["codesign", "--remove-signature", str(library)],
-                        check=False,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                    )
-
     command = [
         sys.executable,
         "-m",
@@ -55,6 +38,17 @@ def build(name: str, script: str) -> None:
         str(WORK),
         str(BACKEND / script),
     ]
+    if sys.platform == "darwin":
+        # OpenVINO's arm64 macOS wheel contains signed dylibs whose Mach-O
+        # load-command layout cannot be rewritten by PyInstaller's
+        # install_name_tool step. Avalon has no supported NPU/OpenVINO target
+        # on macOS, so keep that optional runtime out of the macOS sidecar.
+        command[command.index(str(BACKEND / script)):command.index(str(BACKEND / script))] = [
+            "--exclude-module",
+            "openvino",
+            "--exclude-module",
+            "openvino_genai",
+        ]
     subprocess.run(command, cwd=ROOT, check=True)
 
 
