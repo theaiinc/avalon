@@ -42,6 +42,22 @@ function trayIconPath() {
   return path.join(__dirname, 'assets', 'avalon-tray.png');
 }
 
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow();
+  } else {
+    mainWindow.show();
+    mainWindow.focus();
+  }
+  if (process.platform === 'darwin') app.dock.show();
+}
+
+function hideMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.hide();
+  if (process.platform === 'darwin') app.dock.hide();
+}
+
 function createTray() {
   if (tray) return;
   let image = nativeImage.createFromPath(trayIconPath());
@@ -51,13 +67,7 @@ function createTray() {
   tray.setContextMenu(Menu.buildFromTemplate([
     {
       label: 'Show Avalon',
-      click: () => {
-        if (!mainWindow || mainWindow.isDestroyed()) createWindow();
-        else {
-          mainWindow.show();
-          mainWindow.focus();
-        }
-      },
+      click: showMainWindow,
     },
     { type: 'separator' },
     {
@@ -80,11 +90,7 @@ function createTray() {
     { label: 'Quit Avalon', click: () => app.quit() },
   ]));
   tray.on('click', () => {
-    if (!mainWindow || mainWindow.isDestroyed()) createWindow();
-    else {
-      mainWindow.show();
-      mainWindow.focus();
-    }
+    showMainWindow();
   });
 }
 
@@ -254,8 +260,12 @@ function createWindow() {
   mainWindow.on('close', (event) => {
     if (!stopping && tray) {
       event.preventDefault();
-      mainWindow.hide();
+      hideMainWindow();
     }
+  });
+  mainWindow.on('minimize', (event) => {
+    event.preventDefault();
+    hideMainWindow();
   });
   const devUrl = process.env.VITE_DEV_SERVER_URL || 'http://127.0.0.1:5173';
   if (isDev || !app.isPackaged) {
