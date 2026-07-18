@@ -1,8 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
-import GPUPage from './pages/GPUPage';
-import DriversPage from './pages/DriversPage';
+import HardwarePage from './pages/HardwarePage';
 import ModelsPage from './pages/ModelsPage';
 import BenchmarkPage from './pages/BenchmarkPage';
 import ResultsPage from './pages/ResultsPage';
@@ -14,8 +13,9 @@ export default function App() {
     <Routes>
       <Route element={<Layout />}>
         <Route path="/" element={<Dashboard />} />
-        <Route path="/gpus" element={<GPUPage />} />
-        <Route path="/drivers" element={<DriversPage />} />
+        <Route path="/hardware" element={<HardwarePage />} />
+        <Route path="/gpus" element={<Navigate to="/hardware" replace />} />
+        <Route path="/drivers" element={<Navigate to="/hardware" replace />} />
         <Route path="/models" element={<ModelsPage />} />
         <Route path="/benchmark" element={<BenchmarkPage />} />
         <Route path="/results" element={<ResultsPage />} />

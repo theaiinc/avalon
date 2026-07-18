@@ -5,8 +5,7 @@ import avalonLogo from '../assets/avalon-logo-rounded.png';
 
 const links = [
   { to: '/', label: 'Dashboard', icon: '◉' },
-  { to: '/gpus', label: 'GPUs', icon: '⊞' },
-  { to: '/drivers', label: 'Drivers', icon: '⚙' },
+  { to: '/hardware', label: 'Hardware', icon: '⚙' },
   { to: '/models', label: 'Models', icon: '▦' },
   { to: '/benchmark', label: 'Benchmark', icon: '⚡' },
   { to: '/results', label: 'Results', icon: '☰' },
