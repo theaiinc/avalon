@@ -7,7 +7,6 @@ import ModelsPage from './pages/ModelsPage';
 import BenchmarkPage from './pages/BenchmarkPage';
 import ResultsPage from './pages/ResultsPage';
 import APIPage from './pages/APIPage';
-import AgentsPage from './pages/AgentsPage';
 import PCLinksPage from './pages/PCLinksPage';
 
 export default function App() {
@@ -21,7 +20,7 @@ export default function App() {
         <Route path="/benchmark" element={<BenchmarkPage />} />
         <Route path="/results" element={<ResultsPage />} />
         <Route path="/api-server" element={<APIPage />} />
-        <Route path="/agents" element={<AgentsPage />} />
+        <Route path="/agents" element={<Navigate to="/api-server" replace />} />
         <Route path="/pc-links" element={<PCLinksPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

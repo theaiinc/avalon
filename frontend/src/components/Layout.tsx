@@ -12,7 +12,6 @@ const links = [
   { to: '/results', label: 'Results', icon: '☰' },
   { to: '/api-server', label: 'API Server', icon: '⇌' },
   { to: '/pc-links', label: 'PC Links', icon: '⇄' },
-  { to: '/agents', label: 'Agents', icon: '⌘' },
 ];
 
 export default function Layout() {

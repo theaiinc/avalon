@@ -19,14 +19,13 @@ function CodeBlock({ children }: { children: string }) {
   );
 }
 
-export default function AgentsPage() {
+export function AgentAccessPanel() {
   return (
-    <div>
-      <h2 className="text-lg font-semibold mb-4">Agents</h2>
-      <p className="text-sm text-gray-500 mb-6">
+    <section className="mt-6">
+      <h3 className="text-sm font-medium mb-2">Agent access</h3>
+      <p className="text-xs text-gray-500 mb-4">
         Connect other agents to Avalon through the JSON CLI, MCP stdio server, or the local OpenAI-compatible API.
       </p>
-
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
         <section className="bg-gray-800 rounded-lg p-4 border border-gray-700">
           <h3 className="text-sm font-medium mb-2">MCP Server</h3>
@@ -59,6 +58,15 @@ export default function AgentsPage() {
           <CodeBlock>{`cd ${backendDir}\n${cliExamples.join('\n')}`}</CodeBlock>
         </section>
       </div>
+    </section>
+  );
+}
+
+export default function AgentsPage() {
+  return (
+    <div>
+      <h2 className="text-lg font-semibold mb-4">Agents</h2>
+      <AgentAccessPanel />
     </div>
   );
 }

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '../api/client';
 import Spinner from '../components/Spinner';
 import type { LocalModel, LocalDriver } from '../types';
+import { AgentAccessPanel } from './AgentsPage';
 
 type ServerStatus = 'stopped' | 'running' | 'starting' | 'error';
 type ApiMode = 'openai' | 'anthropic' | 'both';
@@ -659,6 +660,8 @@ export default function APIPage() {
           />
         </div>
       )}
+
+      <AgentAccessPanel />
     </div>
   );
 }
