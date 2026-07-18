@@ -6,6 +6,10 @@ const http = require('node:http');
 const os = require('node:os');
 const crypto = require('node:crypto');
 
+// The dashboard does not need GPU compositing; avoid Electron GPU crashes on
+// systems where the available graphics process is unstable.
+app.disableHardwareAcceleration();
+
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
 const dashboardHost = '127.0.0.1';
 const dashboardPort = Number(process.env.AVALON_DASHBOARD_PORT || 8771);
