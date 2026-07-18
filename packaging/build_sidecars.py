@@ -49,6 +49,20 @@ def build(name: str, script: str) -> None:
             "--exclude-module",
             "openvino_genai",
         ]
+    elif script == "main.py":
+        # The dashboard sidecar delegates inference to avalon-gateway. Keep
+        # optional inference stacks out of this process so Windows/Linux do
+        # not analyze and bundle OpenVINO twice.
+        command[command.index(str(BACKEND / script)):command.index(str(BACKEND / script))] = [
+            "--exclude-module",
+            "openvino",
+            "--exclude-module",
+            "openvino_genai",
+            "--exclude-module",
+            "optimum",
+            "--exclude-module",
+            "transformers",
+        ]
     subprocess.run(command, cwd=ROOT, check=True)
 
 

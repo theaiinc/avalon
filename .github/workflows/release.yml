@@ -34,7 +34,7 @@ jobs:
             arch: x64
             runner: ubuntu-22.04
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 15
+    timeout-minutes: 25
     defaults:
       run:
         shell: bash
@@ -46,6 +46,8 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -112,13 +114,13 @@ jobs:
   watchdog:
     name: Cancel stalled release
     runs-on: ubuntu-22.04
-    timeout-minutes: 17
+    timeout-minutes: 32
     steps:
       - name: Cancel if the workflow stalls
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          for _ in $(seq 1 30); do
+          for _ in $(seq 1 60); do
             status="$(gh run view "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --json status --jq '.status')"
             if [ "$status" = "completed" ]; then
               exit 0
