@@ -292,7 +292,16 @@ ipcMain.handle('avalon:quick-test', async (_event, payload) => {
   }
 });
 
+function configureLaunchAtLogin() {
+  if (process.platform !== 'darwin' || !app.isPackaged) return;
+  app.setLoginItemSettings({
+    openAtLogin: true,
+    openAsHidden: false,
+  });
+}
+
 app.whenReady().then(async () => {
+  configureLaunchAtLogin();
   try {
     await ensureBackend();
     if (process.env.AVALON_AUTOSTART_GATEWAY !== 'false') {
