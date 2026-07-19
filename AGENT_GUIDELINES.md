@@ -35,3 +35,4 @@
 - Aha: electron-builder AppImage generation embeds a differential block map after squashfs creation; the large Linux sidecars make that step exceed 45 minutes, so Linux releases use the tar.gz target to keep the cross-platform release workflow finite.
 - Aha: electron-builder tar.gz archives default to 7zip gzip level 9; Linux sidecars are large enough that this also exceeds the job budget, so the Linux tar.gz target uses `compression: "store"` for a fast, valid uncompressed gzip container.
 - Aha: GitHub release assets must be below 2 GiB; Linux release packaging therefore overrides electron-builder with gzip level 5, balancing the sidecar tarball size against the 45-minute build timeout.
+- Aha: if the compressed Linux tarball still exceeds GitHub's 2 GiB per-asset limit, the release job splits it into 1900 MiB parts and publishes reconstruction instructions alongside the release manifest.

@@ -146,6 +146,20 @@ jobs:
           pattern: avalon-*
           merge-multiple: true
 
+      - name: Split oversized Linux archive
+        working-directory: release-assets
+        shell: bash
+        run: |
+          linux_archive="$(find . -maxdepth 1 -type f -name '*linux*.tar.gz' -print -quit)"
+          if [ -n "$linux_archive" ] && [ "$(stat -c '%s' "$linux_archive")" -ge 2140000000 ]; then
+            split -b 1900m -d -a 2 "$linux_archive" "${linux_archive}.part-"
+            rm "$linux_archive"
+            printf '%s\n' \
+              'Linux archive parts must be concatenated before extraction:' \
+              "cat ${linux_archive#./}.part-* > ${linux_archive#./}" \
+              > LINUX_ARCHIVE_PARTS.txt
+          fi
+
       - name: Create release manifest
         shell: bash
         run: |
