@@ -34,3 +34,4 @@
 - Aha: release packaging is a cross-platform matrix; Linux electron-builder can exceed 25 minutes even when macOS and Windows finish, so the package timeout and watchdog window must leave Linux enough time to complete.
 - Aha: electron-builder AppImage generation embeds a differential block map after squashfs creation; the large Linux sidecars make that step exceed 45 minutes, so Linux releases use the tar.gz target to keep the cross-platform release workflow finite.
 - Aha: electron-builder tar.gz archives default to 7zip gzip level 9; Linux sidecars are large enough that this also exceeds the job budget, so the Linux tar.gz target uses `compression: "store"` for a fast, valid uncompressed gzip container.
+- Aha: GitHub release assets must be below 2 GiB; Linux release packaging therefore overrides electron-builder with gzip level 1, balancing asset size against the 45-minute build timeout.
