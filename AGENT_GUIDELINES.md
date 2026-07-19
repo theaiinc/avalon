@@ -33,3 +33,4 @@
 - Aha: keep separate logo assets for different surfaces. The app/UI icon retains the dark background with rounded corners, while the system tray asset uses the same mark with the background made transparent.
 - Aha: release packaging is a cross-platform matrix; Linux electron-builder can exceed 25 minutes even when macOS and Windows finish, so the package timeout and watchdog window must leave Linux enough time to complete.
 - Aha: electron-builder AppImage generation embeds a differential block map after squashfs creation; the large Linux sidecars make that step exceed 45 minutes, so Linux releases use the tar.gz target to keep the cross-platform release workflow finite.
+- Aha: electron-builder tar.gz archives default to 7zip gzip level 9; Linux sidecars are large enough that this also exceeds the job budget, so the Linux tar.gz target uses `compression: "store"` for a fast, valid uncompressed gzip container.

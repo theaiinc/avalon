@@ -59,6 +59,7 @@
     },
     "linux": {
       "category": "Development",
+      "compression": "store",
       "target": [
         "tar.gz"
       ]
