@@ -60,7 +60,6 @@
     "linux": {
       "category": "Development",
       "target": [
-        "AppImage",
         "tar.gz"
       ]
     }

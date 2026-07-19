@@ -32,3 +32,4 @@
 - Aha: local inference admission now estimates model weights, runtime overhead, KV cache, and MTP head cost before spawning `llama-cli`; low available memory or an oversized reservation waits briefly, then returns `503` with `Retry-After` and capacity details instead of risking a host freeze.
 - Aha: keep separate logo assets for different surfaces. The app/UI icon retains the dark background with rounded corners, while the system tray asset uses the same mark with the background made transparent.
 - Aha: release packaging is a cross-platform matrix; Linux electron-builder can exceed 25 minutes even when macOS and Windows finish, so the package timeout and watchdog window must leave Linux enough time to complete.
+- Aha: electron-builder AppImage generation embeds a differential block map after squashfs creation; the large Linux sidecars make that step exceed 45 minutes, so Linux releases use the tar.gz target to keep the cross-platform release workflow finite.
