@@ -34,7 +34,9 @@ jobs:
             arch: x64
             runner: ubuntu-22.04
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 25
+    # Linux electron-builder can take longer than the macOS and Windows
+    # packaging jobs, especially while downloading AppImage tooling.
+    timeout-minutes: 45
     defaults:
       run:
         shell: bash
@@ -114,13 +116,13 @@ jobs:
   watchdog:
     name: Cancel stalled release
     runs-on: ubuntu-22.04
-    timeout-minutes: 32
+    timeout-minutes: 52
     steps:
       - name: Cancel if the workflow stalls
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          for _ in $(seq 1 60); do
+          for _ in $(seq 1 100); do
             status="$(gh run view "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --json status --jq '.status')"
             if [ "$status" = "completed" ]; then
               exit 0
