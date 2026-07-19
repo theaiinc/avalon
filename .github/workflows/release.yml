@@ -74,9 +74,8 @@ jobs:
         working-directory: frontend
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
-          # Keep the Linux archive below GitHub's 2 GiB release-asset limit
-          # without spending the job budget on maximum gzip compression.
-          ELECTRON_BUILDER_COMPRESSION_LEVEL: "1"
+          # Keep the Linux archive below GitHub's 2 GiB release-asset limit.
+          ELECTRON_BUILDER_COMPRESSION_LEVEL: "9"
         run: npm run dist
 
       - name: Verify platform artifacts
