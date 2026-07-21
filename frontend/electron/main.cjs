@@ -115,6 +115,12 @@ function pythonCommand() {
   return { command: path.join(root, 'backend', '.venv', 'bin', 'python'), args: [] };
 }
 
+function backendWorkingDirectory() {
+  // app.getAppPath() points to app.asar when packaged, which is a file and
+  // cannot be used as a child-process cwd.
+  return app.isPackaged ? process.resourcesPath : appRoot();
+}
+
 function spawnBackend() {
   const python = pythonCommand();
   const script = sidecarPath('avalon-backend') ? [] : [path.join(appRoot(), 'backend', 'main.py')];
@@ -135,7 +141,7 @@ function spawnBackend() {
   };
   if (gateway) env.AVALON_GATEWAY_EXECUTABLE = gateway;
   backendProcess = spawn(python.command, [...python.args, ...script], {
-    cwd: appRoot(),
+    cwd: backendWorkingDirectory(),
     env,
     stdio: 'ignore',
     windowsHide: true,
