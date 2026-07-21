@@ -37,3 +37,4 @@
 - Aha: GitHub release assets must be below 2 GiB; Linux release packaging therefore overrides electron-builder with gzip level 5, balancing the sidecar tarball size against the 45-minute build timeout.
 - Aha: if the compressed Linux tarball still exceeds GitHub's 2 GiB per-asset limit, the release job splits it into 1900 MiB parts and publishes reconstruction instructions alongside the release manifest.
 - Aha: the release watchdog must ignore its own job when checking completion; waiting for the workflow status to become completed creates a self-deadlock and eventual cancellation.
+- Aha: packaged Electron pages load through `file://`; Vite must use `base: "./"` or production CSS and JavaScript resolve to `/assets/...` and the app renders as a blank window.
