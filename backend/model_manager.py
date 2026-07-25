@@ -9,6 +9,23 @@ from config import MODELS_DIR
 api = HfApi()
 
 
+def _infer_capabilities(text: str, declared=None) -> List[str]:
+    if declared:
+        return sorted({str(value) for value in declared})
+    value = text.lower()
+    capabilities = []
+    patterns = {
+        "tts": ("tts", "text-to-speech", "speech-synthesis", "kokoro", "bark", "piper"),
+        "stt": ("whisper", "speech-to-text", "speech_recognition", "automatic-speech-recognition", "wav2vec", "asr"),
+        "imagegen": ("stable-diffusion", "stable_diffusion", "sdxl", "flux", "text-to-image", "imagegen", "diffusion"),
+        "videogen": ("video-generation", "video_generation", "cogvideo", "hunyuan-video", "mochi", "animatediff", "text-to-video"),
+    }
+    for capability, markers in patterns.items():
+        if any(marker in value for marker in markers):
+            capabilities.append(capability)
+    return capabilities
+
+
 def search_models(query: str, limit: int = 20, model_format: str = "gguf") -> List[Dict]:
     tag = "gguf" if model_format == "gguf" else "openvino"
     models = api.list_models(
@@ -59,6 +76,10 @@ def get_local_models() -> List[Dict]:
             if meta_file.exists():
                 with open(meta_file) as f:
                     meta = json.load(f)
+            capabilities = _infer_capabilities(
+                " ".join([entry, meta.get("repo_id", ""), *meta.get("files", [])]),
+                meta.get("capabilities"),
+            )
 
             gguf_files = list(entry_path.rglob("*.gguf"))
             ov_xmls = list(entry_path.glob("openvino_*.xml"))
@@ -72,6 +93,7 @@ def get_local_models() -> List[Dict]:
                     "size": sum(f.stat().st_size for f in entry_path.rglob("*") if f.is_file()),
                     "format": "openvino",
                     "openvino_path": str(entry_path),
+                    "capabilities": capabilities,
                 })
             elif gguf_files:
                 file_names = [str(f.relative_to(entry_path)) for f in gguf_files]
@@ -92,6 +114,7 @@ def get_local_models() -> List[Dict]:
                     "openvino_path": None,
                     "is_draft": is_draft,
                     "serving_supported": not is_draft,
+                    "capabilities": capabilities,
                 })
     return models
 

@@ -97,6 +97,62 @@ The MCP server provides tools for GPUs, model search/download/progress, local mo
 The local inference API is a multi-model gateway: every model under `data/models/` appears in `GET /v1/models`, and chat requests select one with the standard `model` field.
 Linked PC models also appear in `GET /v1/models` with IDs like `pc:<pc-id>:<remote-model-id>`.
 
+## Multimodal testing
+
+The **Multimodal** page tests TTS, STT, image-generation, and video-generation
+adapters independently of the llama.cpp benchmark. A profile identifies an
+approved adapter/model, a test case contains reproducible input and
+assertions, and each run stores normalized metrics and copied artifacts.
+
+Local adapters are never arbitrary shell strings. Configure an allowlist before
+using them:
+
+```bash
+export AVALON_PLUGIN_ALLOWLIST='{"whisper-local":["/opt/avalon/plugins/whisper"]}'
+```
+
+The executable receives one JSON line on stdin:
+
+```json
+{"protocol":"avalon.multimodal/v1","event":"request","run_id":"run_123","modality":"stt","model":"whisper","input":{"audio_base64":"..."},"assertions":{}}
+```
+
+It may emit bounded progress events, then one result or error:
+
+```json
+{"protocol":"avalon.multimodal/v1","event":"result","transcript":"hello","audio_duration_sec":1.2,"artifacts":[]}
+```
+
+HTTP adapters receive the same versioned JSON request, or a multipart request
+when the profile selects `input_format: "multipart"` (base64 input fields are
+decoded into file parts). They may return a JSON
+result, an artifact body (`audio/*`, `image/*`, or `video/*`), or an async
+`{"status":"running","poll_url":"..."}` response when the profile enables
+polling. HTTP credentials use `secret_ref: "env:NAME"` and are resolved only
+at execution time. Private or loopback targets require explicit profile
+approval; redirects are not followed.
+
+Test-case assertions currently support transcript substring checks and minimum
+audio duration, image dimensions, or video frame count. Assertion outcomes are
+stored with the normalized result.
+
+Artifacts are copied into `data/multimodal_artifacts/`, validated by MIME and
+magic bytes where applicable, limited by `AVALON_MAX_ARTIFACT_BYTES` and
+`AVALON_MAX_RUN_BYTES`, and served only through the run-scoped artifact route.
+Runs use `queued`, `running`, `cancelling`, `cancelled`, `failed`, and
+`succeeded` states. Local cancellation terminates the process group; HTTP
+cancellation is best effort.
+
+Multiple multimodal runs and model downloads may execute concurrently. Each
+run has its own worker/state record, while each download uses a detached
+worker and its own persisted progress file.
+
+Image-generation profiles default to Avalon’s built-in stable-diffusion.cpp
+adapter when an image-capable local model is selected. On first run Avalon
+downloads a platform-matched `sd-cli` binary and the FLUX VAE, CLIP-L, and
+T5-XXL companion files into `data/runtimes/stable-diffusion-cpp/`; the profile
+can be customized to use another adapter afterward.
+
 ## Accountless device pairing
 
 Avalon can pair two installations directly over the local network without an

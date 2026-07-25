@@ -8,7 +8,7 @@ const links = [
   { to: '/hardware', label: 'Hardware', icon: '⚙' },
   { to: '/models', label: 'Models', icon: '▦' },
   { to: '/benchmark', label: 'Benchmark', icon: '⚡' },
-  { to: '/results', label: 'Results', icon: '☰' },
+  { to: '/multimodal', label: 'Multimodal', icon: '◈' },
   { to: '/api-server', label: 'API Server', icon: '⇌' },
   { to: '/pc-links', label: 'PC Links', icon: '⇄' },
 ];

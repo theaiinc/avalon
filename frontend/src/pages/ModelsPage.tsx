@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import type { HFModel, LocalModel, ModelFile, DownloadProgress } from '../types';
 import Spinner from '../components/Spinner';
@@ -10,9 +11,7 @@ function useDownloadProgress() {
   const poll = (id: string) => {
     const fn = async () => {
       try {
-        const res = await fetch(`/api/downloads/progress/${id}`);
-        if (!res.ok) { delete timers.current[id]; return; }
-        const p: DownloadProgress = await res.json();
+        const p = await api.downloadProgress(id);
         setDl((prev) => ({ ...prev, [id]: p }));
         if (p.status !== 'done' && p.status !== 'error') {
           timers.current[id] = window.setTimeout(fn, 500);
@@ -43,6 +42,7 @@ function useDownloadProgress() {
 const RECENT_KEY = 'model_search_history';
 
 export default function ModelsPage() {
+  const navigate = useNavigate();
   const [query, setQuery] = useState(() => localStorage.getItem(RECENT_KEY) || 'personaplex');
   const [searchResults, setSearchResults] = useState<HFModel[]>(() => {
     const saved = sessionStorage.getItem('hf_search_results');
@@ -52,6 +52,8 @@ export default function ModelsPage() {
   const [local, setLocal] = useState<LocalModel[]>([]);
   const [loading, setLoading] = useState(false);
   const [busyDl, setBusyDl] = useState<Record<string, boolean>>({});
+  const [keyToDlId, setKeyToDlId] = useState<Record<string, string>>({});
+  const [activeDownloads, setActiveDownloads] = useState<(DownloadProgress & { id: string; kind?: string; repo_id?: string; filename?: string })[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const dl = useDownloadProgress();
 
@@ -62,6 +64,23 @@ export default function ModelsPage() {
   };
 
   useEffect(() => { loadLocal(); }, []);
+
+  const restoreActiveDownloads = () => {
+    api.listActiveDownloads()
+      .then(({ downloads }) => {
+        setActiveDownloads(downloads);
+        downloads.forEach((download) => {
+          if (download.kind !== 'model' || !download.repo_id || !download.filename) return;
+          const key = `${download.repo_id}/${download.filename}`;
+          setKeyToDlId((prev) => ({ ...prev, [key]: download.id }));
+          setBusyDl((prev) => ({ ...prev, [key]: true }));
+          if (!dl.downloads[download.id]) dl.start(download.id);
+        });
+      })
+      .catch(() => {});
+  };
+
+  useEffect(() => { restoreActiveDownloads(); }, []);
 
   useEffect(() => {
     if (searchResults.length > 0) {
@@ -103,13 +122,15 @@ export default function ModelsPage() {
     }
   };
 
-  const [keyToDlId, setKeyToDlId] = useState<Record<string, string>>({});
-
   const handleDownload = async (repoId: string, filename: string) => {
     const key = `${repoId}/${filename}`;
     setBusyDl((prev) => ({ ...prev, [key]: true }));
     try {
       const res = await api.downloadModel(repoId, filename);
+      setActiveDownloads((prev) => [...prev.filter((item) => item.id !== res.download_id), {
+        id: res.download_id, kind: 'model', repo_id: repoId, filename,
+        status: 'starting', percent: 0, stage: 'Starting...',
+      }]);
       setKeyToDlId((prev) => ({ ...prev, [key]: res.download_id }));
       dl.start(res.download_id);
       setBusyDl((prev) => ({ ...prev, [key]: false }));
@@ -133,6 +154,7 @@ export default function ModelsPage() {
     const done = entries.filter(([, p]) => p.status === 'done' || p.status === 'error');
     if (done.length > 0) {
       loadLocal();
+      restoreActiveDownloads();
       done.forEach(([id]) => {
         setTimeout(() => {
           dl.clear(id);
@@ -157,19 +179,37 @@ export default function ModelsPage() {
 
       <div className="bg-gray-900 rounded-lg p-4 mb-6">
         <h3 className="font-semibold mb-3">Local Models</h3>
-        {local.length === 0 ? (
+        {local.length === 0 && activeDownloads.filter((download) => download.kind === 'model').length === 0 ? (
           <p className="text-gray-500 text-sm">No models downloaded. Search and download from HuggingFace below.</p>
         ) : (
           <div className="grid gap-3 md:grid-cols-2">
+            {activeDownloads.filter((download) => download.kind === 'model').map((download) => {
+              const progress = dl.downloads[download.id] || download;
+              return (
+                <div key={`downloading-${download.id}`} className="bg-gray-800/60 rounded p-3 border border-gray-700 opacity-60">
+                  <div className="font-medium text-sm truncate">{download.repo_id}</div>
+                  <div className="text-xs text-gray-500 mt-1 truncate">{download.filename}</div>
+                  <div className="mt-3 bg-gray-700 rounded-full h-2 overflow-hidden">
+                    <div className="h-full bg-blue-500 transition-all duration-300" style={{ width: `${progress.percent}%` }} />
+                  </div>
+                  <div className="text-[10px] text-gray-500 text-right mt-1">{progress.stage || 'Downloading...'} · {progress.percent}%</div>
+                </div>
+              );
+            })}
             {local.map((m) => (
               <div key={m.id} className="bg-gray-800 rounded p-3 border border-gray-700">
                 <div className="font-medium text-sm truncate">{m.repo_id}</div>
                 <div className="text-xs text-gray-500 mt-1">
                   {m.files.join(', ')} · {(m.size / 1024 / 1024 / 1024).toFixed(2)} GB
                 </div>
-                <button onClick={() => handleRemove(m.id)} className="mt-2 px-2 py-0.5 text-xs bg-red-700 rounded hover:bg-red-600">
-                  Remove
-                </button>
+                <div className="mt-2 flex gap-2">
+                  <button onClick={() => navigate(`/multimodal?model=${encodeURIComponent(m.id)}`)} className="px-2 py-0.5 text-xs bg-blue-700 rounded hover:bg-blue-600">
+                    Test
+                  </button>
+                  <button onClick={() => handleRemove(m.id)} className="px-2 py-0.5 text-xs bg-red-700 rounded hover:bg-red-600">
+                    Remove
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -361,8 +401,7 @@ function OpenvinoDownloadButton({ modelId }: { modelId: string }) {
   const [prog, setProg] = useState<DownloadProgress | null>(null);
 
   const poll = (id: string) => {
-    fetch(`/api/downloads/progress/${id}`)
-      .then((r) => r.json())
+    api.downloadProgress(id)
       .then((p: DownloadProgress) => {
         setProg(p);
         if (p.status !== 'done' && p.status !== 'error') {

@@ -4,9 +4,9 @@ import Dashboard from './pages/Dashboard';
 import HardwarePage from './pages/HardwarePage';
 import ModelsPage from './pages/ModelsPage';
 import BenchmarkPage from './pages/BenchmarkPage';
-import ResultsPage from './pages/ResultsPage';
 import APIPage from './pages/APIPage';
 import PCLinksPage from './pages/PCLinksPage';
+import MultimodalPage from './pages/MultimodalPage';
 
 export default function App() {
   return (
@@ -18,7 +18,8 @@ export default function App() {
         <Route path="/drivers" element={<Navigate to="/hardware" replace />} />
         <Route path="/models" element={<ModelsPage />} />
         <Route path="/benchmark" element={<BenchmarkPage />} />
-        <Route path="/results" element={<ResultsPage />} />
+        <Route path="/multimodal" element={<MultimodalPage />} />
+        <Route path="/results" element={<Navigate to="/benchmark?tab=results" replace />} />
         <Route path="/api-server" element={<APIPage />} />
         <Route path="/agents" element={<Navigate to="/api-server" replace />} />
         <Route path="/pc-links" element={<PCLinksPage />} />

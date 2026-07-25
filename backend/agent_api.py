@@ -30,6 +30,9 @@ class DashboardClient:
     def post(self, path: str, payload: Optional[Dict[str, Any]] = None) -> Any:
         return self._request("POST", path, json=payload or {})
 
+    def delete(self, path: str) -> Any:
+        return self._request("DELETE", path)
+
     def list_gpus(self) -> Any:
         return self.get("/api/gpu/list")
 
@@ -111,6 +114,84 @@ class DashboardClient:
 
     def cancel_benchmark(self, task_id: str) -> Any:
         return self.post(f"/api/benchmark/cancel/{task_id}")
+
+    def multimodal_capabilities(self) -> Any:
+        return self.get("/api/multimodal/capabilities")
+
+    def list_multimodal_profiles(self) -> Any:
+        return self.get("/api/multimodal/profiles")
+
+    def save_multimodal_profile(self, profile: Dict[str, Any]) -> Any:
+        return self.post("/api/multimodal/profiles", {"profile": profile})
+
+    def delete_multimodal_profile(self, profile_id: str) -> Any:
+        return self.delete(f"/api/multimodal/profiles/{profile_id}")
+
+    def list_multimodal_cases(self) -> Any:
+        return self.get("/api/multimodal/cases")
+
+    def save_multimodal_case(self, case: Dict[str, Any]) -> Any:
+        return self.post("/api/multimodal/cases", {"case": case})
+
+    def delete_multimodal_case(self, case_id: str) -> Any:
+        return self.delete(f"/api/multimodal/cases/{case_id}")
+
+    def list_multimodal_runs(self) -> Any:
+        return self.get("/api/multimodal/runs")
+
+    def create_multimodal_run(self, profile_id: str, case_id: str) -> Any:
+        return self.post("/api/multimodal/runs", {"profile_id": profile_id, "case_id": case_id})
+
+    def get_multimodal_run(self, run_id: str) -> Any:
+        return self.get(f"/api/multimodal/runs/{run_id}")
+
+    def cancel_multimodal_run(self, run_id: str) -> Any:
+        return self.post(f"/api/multimodal/runs/{run_id}/cancel")
+
+    def run_multimodal_test(
+        self,
+        modality: str,
+        model_id: str,
+        input_data: Dict[str, Any],
+        mode: Optional[str] = None,
+        model_path: str = "",
+    ) -> Any:
+        models = self.list_models().get("models", [])
+        model_info = next(
+            (item for item in models
+             if item.get("id") == model_id or item.get("repo_id") == model_id),
+            {},
+        )
+        resolved_path = model_path or model_info.get("path", "")
+        resolved_model = model_info.get("repo_id") or model_id
+        selected_mode = mode or ("builtin" if modality == "imagegen" else "http")
+        adapter_paths = {
+            "tts": "audio/speech",
+            "stt": "audio/transcriptions",
+            "imagegen": "images/generations",
+            "videogen": "videos/generations",
+        }
+        profile = self.save_multimodal_profile({
+            "name": model_id,
+            "modality": modality,
+            "mode": selected_mode,
+            "model": resolved_model,
+            "model_path": resolved_path,
+            "url": (
+                f"{self.base_url.replace(':8771', ':8787')}/v1/{adapter_paths[modality]}"
+                if selected_mode == "http" else None
+            ),
+            "allow_private_network": selected_mode == "http",
+        }).get("profile", {})
+        case_input = input_data if isinstance(input_data, dict) else {"prompt": str(input_data), "text": str(input_data)}
+        case = self.save_multimodal_case({
+            "name": f"{model_id} test",
+            "modality": modality,
+            "input": case_input,
+            "assertions": {},
+            "profile_id": profile["id"],
+        }).get("case", {})
+        return self.create_multimodal_run(profile["id"], case["id"])
 
     def inference_status(self) -> Any:
         return self.get("/api/api-server/status")

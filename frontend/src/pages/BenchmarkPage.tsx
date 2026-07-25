@@ -1,13 +1,16 @@
 import { useEffect, useState, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
 import type { LocalDriver, LocalModel, ActiveDriver, GPU } from '../types';
 import Spinner from '../components/Spinner';
 import SystemStatsChart from '../components/SystemStatsChart';
 import CompatibilityWarning from '../components/CompatibilityWarning';
+import ResultsPage from './ResultsPage';
 
 export default function BenchmarkPage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = searchParams.get('tab') === 'results' ? 'results' : 'run';
   const [drivers, setDrivers] = useState<LocalDriver[]>([]);
   const [activeDrivers, setActiveDrivers] = useState<ActiveDriver[]>([]);
   const [models, setModels] = useState<LocalModel[]>([]);
@@ -153,6 +156,27 @@ export default function BenchmarkPage() {
     return <div className="flex items-center gap-3 text-gray-400 py-8"><Spinner className="w-5 h-5" /> Loading...</div>;
   }
 
+  const tabs = (
+    <div className="flex gap-2 mb-6 border-b border-gray-800">
+      <button
+        onClick={() => setSearchParams({})}
+        className={`px-4 py-2 text-sm border-b-2 ${activeTab === 'run' ? 'border-blue-500 text-white' : 'border-transparent text-gray-500 hover:text-gray-300'}`}
+      >
+        Run Benchmark
+      </button>
+      <button
+        onClick={() => setSearchParams({ tab: 'results' })}
+        className={`px-4 py-2 text-sm border-b-2 ${activeTab === 'results' ? 'border-blue-500 text-white' : 'border-transparent text-gray-500 hover:text-gray-300'}`}
+      >
+        Results
+      </button>
+    </div>
+  );
+
+  if (activeTab === 'results') {
+    return <div>{tabs}<ResultsPage /></div>;
+  }
+
   const modelFiles = models.flatMap((m) => m.files.map((f) => ({
     id: m.id,
     file: f,
@@ -162,6 +186,7 @@ export default function BenchmarkPage() {
 
   return (
     <div>
+      {tabs}
       <h2 className="text-2xl font-bold mb-6">Run Benchmark</h2>
 
       {running && (

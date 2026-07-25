@@ -1,4 +1,4 @@
-import type { GPU, DriverRelease, LocalDriver, ActiveDriver, HFModel, ModelFile, LocalModel, DownloadProgress, DownloadResponse, BenchmarkResult, BenchmarkListItem, SystemStats, PCLink, PCLinkTestResult, PairingCode, PairingPeer, DiscoveredDevice } from '../types';
+import type { GPU, DriverRelease, LocalDriver, ActiveDriver, HFModel, ModelFile, LocalModel, DownloadProgress, DownloadResponse, BenchmarkResult, BenchmarkListItem, SystemStats, PCLink, PCLinkTestResult, PairingCode, PairingPeer, DiscoveredDevice, MultimodalProfile, MultimodalCase, MultimodalRun } from '../types';
 
 const BASE = window.location.protocol === 'file:' ? 'http://127.0.0.1:8771/api' : '/api';
 
@@ -53,6 +53,10 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ repo_id }),
     }),
+  downloadProgress: (download_id: string) =>
+    fetchJSON<DownloadProgress>(`${BASE}/downloads/progress/${encodeURIComponent(download_id)}`),
+  listActiveDownloads: () =>
+    fetchJSON<{ downloads: (DownloadProgress & { id: string; kind?: string; repo_id?: string; filename?: string })[] }>(`${BASE}/downloads/active`),
   removeModel: (model_id: string) =>
     fetchJSON(`${BASE}/models/remove`, {
       method: 'POST',
@@ -91,6 +95,30 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ result_id }),
     }),
+
+  listMultimodalProfiles: () => fetchJSON<{ profiles: MultimodalProfile[] }>(`${BASE}/multimodal/profiles`),
+  multimodalCapabilities: () => fetchJSON<{ protocol: string; modalities: string[]; modes: string[]; approved_executables: string[] }>(`${BASE}/multimodal/capabilities`),
+  saveMultimodalProfile: (profile: Partial<MultimodalProfile>) =>
+    fetchJSON<{ profile: MultimodalProfile }>(`${BASE}/multimodal/profiles`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ profile }),
+    }),
+  removeMultimodalProfile: (id: string) =>
+    fetchJSON<{ removed: boolean }>(`${BASE}/multimodal/profiles/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  listMultimodalCases: () => fetchJSON<{ cases: MultimodalCase[] }>(`${BASE}/multimodal/cases`),
+  saveMultimodalCase: (testCase: Partial<MultimodalCase>) =>
+    fetchJSON<{ case: MultimodalCase }>(`${BASE}/multimodal/cases`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ case: testCase }),
+    }),
+  removeMultimodalCase: (id: string) =>
+    fetchJSON<{ removed: boolean }>(`${BASE}/multimodal/cases/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  listMultimodalRuns: () => fetchJSON<{ runs: MultimodalRun[] }>(`${BASE}/multimodal/runs`),
+  createMultimodalRun: (profile_id: string, case_id: string) =>
+    fetchJSON<{ run: MultimodalRun }>(`${BASE}/multimodal/runs`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ profile_id, case_id }),
+    }),
+  getMultimodalRun: (id: string) => fetchJSON<MultimodalRun>(`${BASE}/multimodal/runs/${encodeURIComponent(id)}`),
+  cancelMultimodalRun: (id: string) =>
+    fetchJSON<MultimodalRun>(`${BASE}/multimodal/runs/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
 
   listPCLinks: () => fetchJSON<{ links: PCLink[] }>(`${BASE}/pc-links`),
   savePCLink: (name: string, base_url: string, id = '') =>

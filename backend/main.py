@@ -9,16 +9,19 @@ from typing import Any, Dict, List, Optional
 import asyncio
 import uuid
 import os
+import json
+import subprocess
 import httpx
-from progress import create_download, update, get as get_progress, list_active as list_active_downloads
+from fastapi.responses import FileResponse
+from progress import create_download, get as get_progress, list_active as list_active_downloads
 
 from gpu_detector import detect_gpus, check_driver_updates
 from driver_manager import (
-    fetch_releases, get_local_drivers, download_driver,
+    fetch_releases, get_local_drivers,
     set_driver_active, remove_driver, get_active_drivers,
 )
 from model_manager import (
-    search_models, list_files, get_local_models, download_model, download_openvino_model, remove_model,
+    search_models, list_files, get_local_models, remove_model,
 )
 from benchmark_runner import run_benchmark, list_results, get_result, delete_result, cancel_benchmark, list_active as list_active_benchmarks
 from system_stats import collect as collect_system_stats
@@ -26,6 +29,11 @@ from known_issues import KNOWN_ISSUES
 from api_server import start_server as api_start, stop_server as api_stop, server_status as api_status
 from pc_links import list_links as list_pc_links, upsert_link as upsert_pc_link, remove_link as remove_pc_link, test_link as test_pc_link
 from served_profiles import reset_override as reset_serving_profile, upsert_override as save_serving_profile
+from multimodal import (
+    artifact_path, cancel_run as cancel_multimodal_run, create_run as create_multimodal_run,
+    capabilities as multimodal_capabilities, delete_case, delete_profile, get_run, list_cases, list_profiles, list_runs,
+    recover_runs, save_case, save_profile,
+)
 import pairing
 
 app = FastAPI(title="Avalon")
@@ -42,6 +50,7 @@ app.add_middleware(
 @app.on_event("startup")
 async def start_pairing_discovery():
     pairing.start_discovery(int(os.environ.get("AVALON_PORT", "8771")))
+    recover_runs()
 
 
 @app.on_event("shutdown")
@@ -164,6 +173,32 @@ class QuickTestRequest(BaseModel):
     format: str = "openai"
 
 
+class MultimodalProfileRequest(BaseModel):
+    profile: Dict[str, Any]
+
+
+class MultimodalCaseRequest(BaseModel):
+    case: Dict[str, Any]
+
+
+class MultimodalRunRequest(BaseModel):
+    profile_id: str
+    case_id: str
+
+
+def start_download_worker(download_id: str, kind: str, payload: Dict[str, Any]) -> None:
+    worker = os.path.join(os.path.dirname(__file__), "download_worker.py")
+    subprocess.Popen(
+        [sys.executable, worker, download_id, kind, json.dumps(payload)],
+        cwd=os.path.dirname(worker),
+        env=os.environ.copy(),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+
 @app.get("/api/gpu/list")
 async def list_gpus():
     gpus = detect_gpus()
@@ -193,18 +228,8 @@ async def list_releases():
 
 @app.post("/api/drivers/download")
 async def download(req: DownloadDriverRequest):
-    download_id = create_download()
-    update(download_id, status="starting", percent=0, stage="Starting...")
-
-    async def task():
-        try:
-            def prog(**kw):
-                update(download_id, **kw)
-            await download_driver(req.tag, req.backend, on_progress=prog)
-        except Exception as e:
-            update(download_id, status="error", percent=0, stage=str(e))
-
-    asyncio.create_task(task())
+    download_id = create_download(kind="driver", tag=req.tag, backend=req.backend)
+    start_download_worker(download_id, "driver", {"tag": req.tag, "backend": req.backend})
     return {"download_id": download_id}
 
 
@@ -241,39 +266,15 @@ async def list_models():
 
 @app.post("/api/models/download")
 async def download(req: DownloadModelRequest):
-    download_id = create_download()
-    update(download_id, status="starting", percent=0, stage="Starting...")
-
-    async def task():
-        try:
-            def prog(**kw):
-                update(download_id, **kw)
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, lambda: download_model(req.repo_id, req.filename, on_progress=prog))
-            update(download_id, status="done", percent=100, stage="Complete")
-        except Exception as e:
-            update(download_id, status="error", percent=0, stage=str(e))
-
-    asyncio.create_task(task())
+    download_id = create_download(kind="model", repo_id=req.repo_id, filename=req.filename)
+    start_download_worker(download_id, "model", {"repo_id": req.repo_id, "filename": req.filename})
     return {"download_id": download_id}
 
 
 @app.post("/api/models/download-openvino")
 async def download_ov(req: DownloadOVModelRequest):
-    download_id = create_download()
-    update(download_id, status="starting", percent=0, stage="Starting...")
-
-    async def task():
-        try:
-            def prog(**kw):
-                update(download_id, **kw)
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, lambda: download_openvino_model(req.repo_id, on_progress=prog))
-            update(download_id, status="done", percent=100, stage="Complete")
-        except Exception as e:
-            update(download_id, status="error", percent=0, stage=str(e))
-
-    asyncio.create_task(task())
+    download_id = create_download(kind="openvino", repo_id=req.repo_id)
+    start_download_worker(download_id, "openvino", {"repo_id": req.repo_id})
     return {"download_id": download_id}
 
 
@@ -326,6 +327,87 @@ async def benchmark_stats():
 async def benchmark_cancel(task_id: str):
     ok = cancel_benchmark(task_id)
     return {"task_id": task_id, "cancelled": ok}
+
+
+@app.get("/api/multimodal/profiles")
+async def multimodal_profiles():
+    return {"profiles": list_profiles()}
+
+
+@app.get("/api/multimodal/capabilities")
+async def multimodal_capability_list():
+    try:
+        return multimodal_capabilities()
+    except ValueError as exc:
+        raise HTTPException(500, detail=str(exc))
+
+
+@app.post("/api/multimodal/profiles")
+async def multimodal_profile(req: MultimodalProfileRequest):
+    try:
+        return {"profile": save_profile(req.profile)}
+    except ValueError as exc:
+        raise HTTPException(400, detail=str(exc))
+
+
+@app.delete("/api/multimodal/profiles/{profile_id}")
+async def multimodal_profile_delete(profile_id: str):
+    return {"removed": delete_profile(profile_id)}
+
+
+@app.get("/api/multimodal/cases")
+async def multimodal_cases():
+    return {"cases": list_cases()}
+
+
+@app.post("/api/multimodal/cases")
+async def multimodal_case(req: MultimodalCaseRequest):
+    try:
+        return {"case": save_case(req.case)}
+    except ValueError as exc:
+        raise HTTPException(400, detail=str(exc))
+
+
+@app.delete("/api/multimodal/cases/{case_id}")
+async def multimodal_case_delete(case_id: str):
+    return {"removed": delete_case(case_id)}
+
+
+@app.get("/api/multimodal/runs")
+async def multimodal_runs():
+    return {"runs": list_runs()}
+
+
+@app.post("/api/multimodal/runs")
+async def multimodal_run(req: MultimodalRunRequest):
+    try:
+        return {"run": create_multimodal_run(req.profile_id, req.case_id)}
+    except ValueError as exc:
+        raise HTTPException(400, detail=str(exc))
+
+
+@app.get("/api/multimodal/runs/{run_id}")
+async def multimodal_run_status(run_id: str):
+    run = get_run(run_id)
+    if not run:
+        raise HTTPException(404, detail="Multimodal run not found")
+    return run
+
+
+@app.post("/api/multimodal/runs/{run_id}/cancel")
+async def multimodal_run_cancel(run_id: str):
+    try:
+        return cancel_multimodal_run(run_id)
+    except ValueError as exc:
+        raise HTTPException(404, detail=str(exc))
+
+
+@app.get("/api/multimodal/artifacts/{run_id}/{filename}")
+async def multimodal_artifact(run_id: str, filename: str):
+    path = artifact_path(run_id, filename)
+    if not path:
+        raise HTTPException(404, detail="Artifact not found")
+    return FileResponse(path)
 
 
 @app.get("/api/benchmark/results")

@@ -73,6 +73,7 @@ export interface LocalModel {
   size: number;
   format?: string;
   openvino_path?: string | null;
+  capabilities?: string[];
 }
 
 export interface BenchmarkRun {
@@ -104,6 +105,65 @@ export interface BenchmarkListItem {
   model_name: string;
   backends: string[];
   n_runs: number;
+}
+
+export type MultimodalModality = 'tts' | 'stt' | 'imagegen' | 'videogen';
+export type MultimodalRunState = 'queued' | 'running' | 'cancelling' | 'cancelled' | 'failed' | 'succeeded';
+
+export interface MultimodalProfile {
+  id: string;
+  name: string;
+  modality: MultimodalModality;
+  mode: 'local' | 'http' | 'builtin';
+  model: string;
+  model_path?: string;
+  executable_id?: string;
+  url?: string;
+  allow_private_network?: boolean;
+  async?: boolean;
+  timeout_sec: number;
+  secret_ref?: string;
+  protocol_version: string;
+}
+
+export interface MultimodalCase {
+  id: string;
+  name: string;
+  modality: MultimodalModality;
+  input: Record<string, any>;
+  assertions: Record<string, any>;
+  profile_id?: string;
+}
+
+export interface MultimodalArtifact {
+  id: string;
+  filename: string;
+  mime: string;
+  bytes: number;
+  url: string;
+}
+
+export interface MultimodalRun {
+  id: string;
+  protocol: string;
+  profile_id: string;
+  case_id: string;
+  modality: MultimodalModality;
+  state: MultimodalRunState;
+  created_at: string;
+  timeout_sec?: number;
+  started_at?: string;
+  finished_at?: string;
+  error?: string;
+  progress?: { stage: string; detail: string };
+  result?: {
+    protocol: string;
+    modality: MultimodalModality;
+    metrics: Record<string, number>;
+    artifacts: MultimodalArtifact[];
+    transcript?: string;
+    assertions?: { passed: boolean; checks: { name: string; passed: boolean }[] };
+  };
 }
 
 export interface DownloadProgress {
