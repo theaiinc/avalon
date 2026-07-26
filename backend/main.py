@@ -11,6 +11,7 @@ import uuid
 import os
 import json
 import subprocess
+import threading
 import httpx
 from fastapi.responses import FileResponse
 from progress import create_download, get as get_progress, list_active as list_active_downloads
@@ -38,6 +39,10 @@ import pairing
 
 app = FastAPI(title="Avalon")
 
+_gateway_supervisor_stop = threading.Event()
+_gateway_supervisor_lock = threading.Lock()
+_gateway_stop_requested = False
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -49,13 +54,61 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def start_pairing_discovery():
-    pairing.start_discovery(int(os.environ.get("AVALON_PORT", "8771")))
+    # Keychain-backed device identity can block briefly on packaged macOS
+    # builds. Discovery is optional, so it must not delay the HTTP server.
+    threading.Thread(
+        target=pairing.start_discovery,
+        args=(int(os.environ.get("AVALON_PORT", "8771")),),
+        name="avalon-pairing-discovery",
+        daemon=True,
+    ).start()
     recover_runs()
+    if os.environ.get("AVALON_AUTOSTART_GATEWAY", "true").lower() != "false":
+        threading.Thread(
+            target=_supervise_inference_gateway,
+            name="avalon-gateway-supervisor",
+            daemon=True,
+        ).start()
 
 
 @app.on_event("shutdown")
 async def stop_pairing_discovery():
+    _gateway_supervisor_stop.set()
     pairing.stop_discovery()
+
+
+def _supervise_inference_gateway() -> None:
+    """Keep the optional inference gateway available for script-based launches."""
+    global _gateway_stop_requested
+    port = int(os.environ.get("AVALON_GATEWAY_PORT", "8787"))
+    mode = os.environ.get("AVALON_GATEWAY_MODE", "both")
+    device = os.environ.get("AVALON_GATEWAY_DEVICE", "")
+    openvino_device = os.environ.get("AVALON_OPENVINO_DEVICE", "NPU")
+
+    # Give uvicorn a moment to finish binding before the first health check.
+    _gateway_supervisor_stop.wait(1.0)
+    while not _gateway_supervisor_stop.is_set():
+        if not _gateway_stop_requested:
+            try:
+                status = api_status()
+                if status.get("status") != "running":
+                    with _gateway_supervisor_lock:
+                        # Another launcher may have restored it while we waited
+                        # for the status request; start_server handles that case.
+                        if not _gateway_stop_requested:
+                            api_start(
+                                model_id="",
+                                port=port,
+                                mode=mode,
+                                device=device,
+                                gpu_index="",
+                                gguf_backend=device,
+                                openvino_device=openvino_device,
+                            )
+            except Exception as exc:
+                # Driver/model failures should not take down the dashboard.
+                print(f"Gateway supervisor could not start gateway: {exc}", flush=True)
+        _gateway_supervisor_stop.wait(5.0)
 
 
 @app.middleware("http")
@@ -478,6 +531,8 @@ async def api_server_status():
 
 @app.post("/api/api-server/start")
 async def api_server_start(req: ApiServerStartRequest):
+    global _gateway_stop_requested
+    _gateway_stop_requested = False
     try:
         return api_start(
             req.model_id,
@@ -496,6 +551,8 @@ async def api_server_start(req: ApiServerStartRequest):
 
 @app.post("/api/api-server/stop")
 async def api_server_stop():
+    global _gateway_stop_requested
+    _gateway_stop_requested = True
     result = api_stop()
     if result.get("status") == "busy":
         raise HTTPException(status_code=409, detail=result)
