@@ -4,7 +4,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from model_manager import get_local_models
 from driver_manager import get_local_drivers, get_active_drivers, find_driver_executable
 from gpu_detector import detect_gpus
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -31,7 +31,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-_PUBLIC_LLM_PATHS = {"/v1/models", "/v1/chat/completions", "/v1/messages"}
+_PUBLIC_LLM_PATHS = {
+    "/v1/models", "/v1/chat/completions", "/v1/messages",
+    "/v1/images/generations", "/v1/images/edits",
+}
 
 
 def _is_loopback(request) -> bool:
@@ -179,8 +182,19 @@ class AnthropicRequest(BaseModel):
     model: str = ""
     messages: List[AnthropicMessage]
     max_tokens: Optional[int] = 512
-    temperature: Optional[float] = 0.7
-    stream: Optional[bool] = False
+
+
+class ImageRequest(BaseModel):
+    model: str = ""
+    prompt: str
+    image: Optional[str] = None
+    negative_prompt: str = ""
+    size: str = "1024x1024"
+    n: int = 1
+    steps: int = 28
+    guidance: float = 2.5
+    seed: int = -1
+    response_format: str = "url"
 
 # --- In-memory model cache for OpenVINO paths ---
 _ov_pipes: Dict[str, Any] = {}
@@ -252,6 +266,94 @@ async def list_models():
             "owned_by": m.get("source", "local"),
         })
     return {"object": "list", "data": models}
+
+
+async def _run_dashboard_image(req: ImageRequest) -> dict:
+    local_models = get_local_models()
+    model_info = next(
+        (item for item in local_models if item.get("id") == req.model or item.get("repo_id") == req.model),
+        None,
+    )
+    if not model_info or not model_info.get("path"):
+        raise HTTPException(404, f"Image model '{req.model}' was not found locally")
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            profile_response = await client.post("http://127.0.0.1:8771/api/multimodal/profiles", json={
+                "profile": {
+                    "name": req.model,
+                    "modality": "imagegen",
+                    "mode": "builtin",
+                    "model": model_info.get("repo_id") or req.model,
+                    "model_path": model_info["path"],
+                },
+            })
+            profile_response.raise_for_status()
+            profile = profile_response.json()["profile"]
+            width, height = (int(value) for value in req.size.lower().replace("x", " ").split())
+            case_response = await client.post("http://127.0.0.1:8771/api/multimodal/cases", json={
+                "case": {
+                    "name": f"{req.model} image request",
+                    "modality": "imagegen",
+                    "profile_id": profile["id"],
+                    "input": {
+                        "prompt": req.prompt,
+                        "text": req.prompt,
+                        **({"image_base64": req.image} if req.image else {}),
+                        "options": {
+                            "negative_prompt": req.negative_prompt,
+                            "width": width,
+                            "height": height,
+                            "steps": req.steps,
+                            "guidance": req.guidance,
+                            "seed": req.seed,
+                        },
+                    },
+                    "assertions": {},
+                },
+            })
+            case_response.raise_for_status()
+            case = case_response.json()["case"]
+            run_response = await client.post("http://127.0.0.1:8771/api/multimodal/runs", json={
+                "profile_id": profile["id"], "case_id": case["id"],
+            })
+            run_response.raise_for_status()
+            run_id = run_response.json()["run"]["id"]
+            deadline = time.monotonic() + 3600
+            while time.monotonic() < deadline:
+                status_response = await client.get(f"http://127.0.0.1:8771/api/multimodal/runs/{run_id}")
+                status_response.raise_for_status()
+                run = status_response.json()
+                if run["state"] in {"succeeded", "failed", "cancelled"}:
+                    if run["state"] != "succeeded":
+                        raise HTTPException(502, run.get("error") or "Image generation failed")
+                    artifact = run["result"]["artifacts"][0]
+                    artifact_url = f"http://127.0.0.1:8771{artifact['url']}"
+                    return {
+                        "created": int(time.time()),
+                        "data": [{
+                            "url": artifact_url,
+                            "revised_prompt": req.prompt,
+                        }],
+                    }
+                await asyncio.sleep(2)
+    except HTTPException:
+        raise
+    except (ValueError, httpx.HTTPError) as exc:
+        raise HTTPException(502, f"Image generation request failed: {exc}") from exc
+    raise HTTPException(504, "Image generation timed out")
+
+
+@app.post("/v1/images/generations")
+async def image_generations(req: ImageRequest):
+    return await _run_dashboard_image(req)
+
+
+@app.post("/v1/images/edits")
+async def image_edits(req: ImageRequest):
+    if not req.image:
+        raise HTTPException(400, "image is required for /v1/images/edits")
+    return await _run_dashboard_image(req)
+
 
 @app.post("/v1/chat/completions")
 async def chat_completions(req: ChatRequest):
@@ -605,7 +707,7 @@ def _chat_ov(model_path: str, req: ChatRequest, reservation=None) -> Dict:
                 "message": {"role": "assistant", "content": result},
                 "finish_reason": "stop",
             }],
-            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+            "usage": _openai_usage(prompt, result),
         }
     except Exception as e:
         raise HTTPException(500, str(e))
@@ -623,7 +725,7 @@ def _messages_ov(model_path: str, req: AnthropicRequest, reservation=None) -> Di
             "content": [{"type": "text", "text": result}],
             "model": req.model or os.path.basename(model_path),
             "stop_reason": "end_turn",
-            "usage": {"input_tokens": 0, "output_tokens": 0},
+            "usage": _anthropic_usage(prompt, result),
         }
     except Exception as e:
         raise HTTPException(500, str(e))
@@ -701,7 +803,7 @@ def _run_llama_cli(model_path: str, req: Any, api_format: str, reservation=None)
                 "created": int(time.time()),
                 "model": req.model or os.path.basename(model_path),
                 "choices": [{"index": 0, "message": {"role": "assistant", "content": output}, "finish_reason": "stop"}],
-                "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+                "usage": _openai_usage(prompt, output),
             }
         else:
             return {
@@ -711,7 +813,7 @@ def _run_llama_cli(model_path: str, req: Any, api_format: str, reservation=None)
                 "content": [{"type": "text", "text": output}],
                 "model": req.model or os.path.basename(model_path),
                 "stop_reason": "end_turn",
-                "usage": {"input_tokens": 0, "output_tokens": 0},
+                "usage": _anthropic_usage(prompt, output),
             }
     except subprocess.TimeoutExpired:
         raise HTTPException(504, "llama-cli timed out")
@@ -989,6 +1091,24 @@ def _estimate_text_tokens(text: str) -> int:
     if not text:
         return 0
     return len(re.findall(r"\w+|[^\w\s]", text, flags=re.UNICODE))
+
+
+def _openai_usage(prompt: str, output: str) -> Dict[str, int]:
+    # Estimates: the CLI runtimes do not report tokenizer counts.
+    prompt_tokens = _estimate_text_tokens(prompt)
+    completion_tokens = _estimate_text_tokens(output)
+    return {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": prompt_tokens + completion_tokens,
+    }
+
+
+def _anthropic_usage(prompt: str, output: str) -> Dict[str, int]:
+    return {
+        "input_tokens": _estimate_text_tokens(prompt),
+        "output_tokens": _estimate_text_tokens(output),
+    }
 
 def _format_chat_prompt(messages: list) -> str:
     parts = []

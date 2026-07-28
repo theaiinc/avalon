@@ -18,7 +18,9 @@ import psutil
 
 
 DEFAULT_RESERVE_BYTES = 3 * 1024**3
-DEFAULT_MAX_WAIT_SECONDS = 300
+# Keep the admission wait short: a queued request produces no bytes on the
+# wire, so long waits are indistinguishable from a hung gateway to clients.
+DEFAULT_MAX_WAIT_SECONDS = 30
 DEFAULT_POLL_SECONDS = 1.0
 
 

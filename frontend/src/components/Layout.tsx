@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
+import { api } from '../api/client';
 import Spinner from './Spinner';
 import avalonLogo from '../assets/avalon-logo-rounded.png';
 
@@ -20,8 +21,7 @@ export default function Layout() {
   useEffect(() => {
     const check = async () => {
       try {
-        const res = await fetch('/api/benchmark/list-active');
-        const data = await res.json();
+        const data = await api.listActiveBenchmarks();
         if (data.active?.length > 0) {
           setRunning({ id: data.active[0].id, elapsed: 0 });
           if (!pollRef.current) {
@@ -44,7 +44,7 @@ export default function Layout() {
   const handleStop = async () => {
     if (!running) return;
     try {
-      await fetch(`/api/benchmark/cancel/${running.id}`, { method: 'POST' });
+      await api.cancelBenchmark(running.id);
     } catch { }
   };
 

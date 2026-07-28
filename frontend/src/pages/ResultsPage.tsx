@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import type { BenchmarkListItem, BenchmarkResult } from '../types';
 import Spinner from '../components/Spinner';
@@ -51,7 +52,7 @@ export default function ResultsPage() {
       {loading ? (
         <div className="flex items-center gap-3 text-gray-400 py-8"><Spinner className="w-5 h-5" /> Loading...</div>
       ) : results.length === 0 ? (
-        <p className="text-gray-500">No benchmark results yet. Run one from the <a href="/benchmark" className="text-blue-400 hover:underline">Benchmark page</a>.</p>
+        <p className="text-gray-500">No benchmark results yet. Run one from the <Link to="/benchmark" className="text-blue-400 hover:underline">Benchmark page</Link>.</p>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-stretch">
           <div className="lg:col-span-1 space-y-2 h-full">

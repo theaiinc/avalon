@@ -10,8 +10,7 @@ function useDownloadProgress() {
   const poll = (id: string) => {
     const fn = async () => {
       try {
-        const res = await fetch(`/api/downloads/progress/${id}`);
-        const p: DownloadProgress = await res.json();
+        const p = await api.downloadProgress(id);
         setDl((prev) => ({ ...prev, [id]: p }));
         if (p.status !== 'done' && p.status !== 'error') {
           timers.current[id] = window.setTimeout(fn, 500);

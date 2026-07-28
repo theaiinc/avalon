@@ -98,7 +98,8 @@ export default function APIPage() {
   const [requestLog, setRequestLog] = useState<RequestLogEntry[]>([]);
   const [showResourceWarning, setShowResourceWarning] = useState(false);
 
-  const dashboardBase = runtime?.dashboardUrl || '';
+  const dashboardBase = runtime?.dashboardUrl
+    || (window.location.protocol === 'file:' ? 'http://127.0.0.1:8771' : '');
   const gatewayBase = runtime?.gatewayUrl || `http://127.0.0.1:${port}`;
   const activeModels = servedModels.filter((model) => Boolean(model.current_request));
 
@@ -186,7 +187,7 @@ export default function APIPage() {
         dspark: `${m.id} ${m.repo_id} ${m.files?.join(' ') || ''}`.toLowerCase().includes('dspark'),
       })));
     }).catch(() => {});
-    fetch('/api/drivers').then(r => r.json()).then(data => {
+    api.listDrivers().then(data => {
       setDrivers((data.local || []).filter((d: LocalDriver) => d.backend !== 'npu' && d.llama_bench_path));
     }).catch(() => {});
     refreshStatus();

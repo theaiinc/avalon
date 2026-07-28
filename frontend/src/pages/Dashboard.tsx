@@ -41,10 +41,10 @@ export default function Dashboard() {
   const gpuGroupList = Object.entries(gpuGroups);
 
   const cards = [
-    { label: 'GPUs Detected', value: gpuGroupList.length, color: 'border-blue-500', to: '/gpus' },
-    { label: 'Drivers Downloaded', value: drivers.length, color: 'border-green-500', to: '/drivers' },
+    { label: 'GPUs Detected', value: gpuGroupList.length, color: 'border-blue-500', to: '/hardware' },
+    { label: 'Drivers Downloaded', value: drivers.length, color: 'border-green-500', to: '/hardware' },
     { label: 'Models Downloaded', value: models.length, color: 'border-yellow-500', to: '/models' },
-    { label: 'Benchmark Runs', value: results.length, color: 'border-purple-500', to: '/results' },
+    { label: 'Benchmark Runs', value: results.length, color: 'border-purple-500', to: '/benchmark?tab=results' },
   ];
 
   return (
@@ -102,7 +102,7 @@ export default function Dashboard() {
               {results.slice(0, 5).map((r) => (
                 <button
                   key={r.id}
-                  onClick={() => navigate(`/results`)}
+                  onClick={() => navigate(`/benchmark?tab=results`)}
                   className="w-full flex justify-between text-sm hover:text-blue-400"
                 >
                   <span>{r.model_name}</span>

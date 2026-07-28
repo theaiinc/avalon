@@ -61,12 +61,3 @@ export function AgentAccessPanel() {
     </section>
   );
 }
-
-export default function AgentsPage() {
-  return (
-    <div>
-      <h2 className="text-lg font-semibold mb-4">Agents</h2>
-      <AgentAccessPanel />
-    </div>
-  );
-}

@@ -12,6 +12,7 @@ import os
 import json
 import subprocess
 import threading
+import time
 import httpx
 from fastapi.responses import FileResponse
 from progress import create_download, get as get_progress, list_active as list_active_downloads
@@ -527,6 +528,30 @@ async def compatibility_check(backend: str = "", model_name: str = "", gpu_name:
 @app.get("/api/api-server/status")
 async def api_server_status():
     return api_status()
+
+
+@app.get("/v1/models")
+async def list_served_models():
+    """Mirror the gateway's OpenAI-compatible model list on the dashboard port."""
+    port = api_status().get("config", {}).get("port", 8787)
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(f"http://127.0.0.1:{port}/v1/models")
+        if response.status_code == 200:
+            return response.json()
+    except Exception:
+        pass
+    models = [
+        {
+            "id": m["id"],
+            "object": "model",
+            "created": int(time.time()),
+            "owned_by": m.get("source", "local"),
+        }
+        for m in get_local_models()
+        if not m.get("is_draft") and m.get("serving_supported") is not False
+    ]
+    return {"object": "list", "data": models}
 
 
 @app.post("/api/api-server/start")
