@@ -17,7 +17,7 @@ def _infer_capabilities(text: str, declared=None) -> List[str]:
     patterns = {
         "tts": ("tts", "text-to-speech", "speech-synthesis", "kokoro", "bark", "piper"),
         "stt": ("whisper", "speech-to-text", "speech_recognition", "automatic-speech-recognition", "wav2vec", "asr"),
-        "imagegen": ("stable-diffusion", "stable_diffusion", "sdxl", "flux", "text-to-image", "imagegen", "diffusion"),
+        "imagegen": ("stable-diffusion", "stable_diffusion", "sdxl", "flux", "qwen-image", "qwen_image", "text-to-image", "imagegen", "diffusion"),
         "videogen": ("video-generation", "video_generation", "cogvideo", "hunyuan-video", "mochi", "animatediff", "text-to-video"),
     }
     for capability, markers in patterns.items():
@@ -135,17 +135,24 @@ def download_model(repo_id: str, filename: str, on_progress: Optional[Callable] 
     meta = get_hf_file_metadata(url)
     total_size = meta.size or 0
     downloaded = 0
-
-    with open(dest_path, "wb") as f:
-        with httpx.Client(follow_redirects=True) as client:
-            with client.stream("GET", url) as resp:
-                resp.raise_for_status()
-                for chunk in resp.iter_bytes():
-                    f.write(chunk)
-                    downloaded += len(chunk)
-                    if on_progress and total_size > 0:
-                        pct = int(downloaded / total_size * 95)
-                        on_progress(status="downloading", percent=pct, stage=f"Downloading... ({downloaded//1024//1024} MB / {total_size//1024//1024} MB)")
+    partial_path = dest_path.with_suffix(dest_path.suffix + ".part")
+    try:
+        with partial_path.open("wb") as f:
+            with httpx.Client(follow_redirects=True, timeout=httpx.Timeout(300, connect=30)) as client:
+                with client.stream("GET", url) as resp:
+                    resp.raise_for_status()
+                    for chunk in resp.iter_bytes():
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if on_progress and total_size > 0:
+                            pct = int(downloaded / total_size * 95)
+                            on_progress(status="downloading", percent=pct, stage=f"Downloading... ({downloaded//1024//1024} MB / {total_size//1024//1024} MB)")
+        if total_size and downloaded != total_size:
+            raise RuntimeError(f"model download incomplete: received {downloaded} of {total_size} bytes")
+        partial_path.replace(dest_path)
+    except Exception:
+        partial_path.unlink(missing_ok=True)
+        raise
 
     if on_progress:
         on_progress(status="done", percent=100, stage="Done")

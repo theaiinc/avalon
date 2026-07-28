@@ -92,7 +92,9 @@ cd backend
 LLAMA_DASH_URL=http://127.0.0.1:8771 .venv/bin/python mcp_server.py
 ```
 
-The MCP server provides tools for GPUs, model search/download/progress, local models, drivers, benchmark runs/results, inference API lifecycle, and OpenAI-compatible chat against the local inference API.
+The MCP server provides tools for GPUs, model search/download/progress, local models, drivers, benchmark runs/results, inference API lifecycle, multimodal profile/case/run management, and OpenAI-compatible chat against the local inference API. Use `run_multimodal_test` for image generation and editing; it accepts `prompt`, `reference_image_base64`, `negative_prompt`, `width`, `height`, `steps`, `guidance`, and `seed`. Do not use `chat_completion_openai` for FLUX, Kontext, TTS, STT, or video models.
+
+After changing MCP tools, restart or reconnect the MCP server so the client refreshes its tool schema. The MCP server uses stdio, so an already-connected client will not discover newly added parameters until it reconnects.
 
 The local inference API is a multi-model gateway: every model under `data/models/` appears in `GET /v1/models`, and chat requests select one with the standard `model` field.
 Linked PC models also appear in `GET /v1/models` with IDs like `pc:<pc-id>:<remote-model-id>`.

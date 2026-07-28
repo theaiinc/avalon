@@ -463,8 +463,26 @@ def _run_builtin(run: dict, profile: dict, case: dict) -> dict:
         raise ValueError("automatic image generation requires a local model path")
     from diffusion_runtime import generate_flux
     output = ARTIFACT_DIR / run["id"] / "generated.png"
-    prompt = str(case.get("input", {}).get("prompt") or case.get("input", {}).get("text") or "")
-    generate_flux(profile["model_path"], prompt, output)
+    case_input = case.get("input", {})
+    prompt = str(case_input.get("prompt") or case_input.get("text") or "")
+    options = dict(case_input.get("options") or {})
+    if case_input.get("image_base64"):
+        options["image_base64"] = case_input["image_base64"]
+    if not options.get("image_base64"):
+        # Backward compatibility for agents that put an Avalon artifact path
+        # in the prompt before the image-input field was exposed.
+        reference = re.search(r"/multimodal_artifacts/(run_[^/\s\"']+)/([^/\s\"']+)", prompt)
+        if reference:
+            reference_path = ARTIFACT_DIR / reference.group(1) / reference.group(2)
+            if reference_path.is_file() and reference_path.stat().st_size <= MAX_ARTIFACT_BYTES:
+                options["image_base64"] = base64.b64encode(reference_path.read_bytes()).decode()
+    generate_flux(
+        profile["model_path"],
+        prompt,
+        output,
+        options,
+        on_process=lambda process: _processes.__setitem__(run["id"], process),
+    )
     return {
         "artifacts": [{
             "mime": "image/png",

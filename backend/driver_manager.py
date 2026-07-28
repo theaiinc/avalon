@@ -34,10 +34,16 @@ FORK_SOURCES = {
 
 async def fetch_releases() -> List[Dict]:
     if RELEASES_CACHE_FILE.exists():
-        with open(RELEASES_CACHE_FILE) as f:
-            return json.load(f)
+        try:
+            with open(RELEASES_CACHE_FILE) as f:
+                return json.load(f)
+        except (OSError, json.JSONDecodeError):
+            # A truncated cache must not make the driver page unusable.
+            # Re-fetch the release metadata below.
+            pass
     data = []
-    async with httpx.AsyncClient() as client:
+    timeout = httpx.Timeout(30.0, connect=10.0)
+    async with httpx.AsyncClient(timeout=timeout) as client:
         resp = await client.get(
             f"https://api.github.com/repos/{LLAMA_CPP_REPO}/releases?per_page=10",
             headers={"Accept": "application/vnd.github.v3+json"},
@@ -212,16 +218,23 @@ async def download_driver(tag: str, backend: str, on_progress: Optional[Callable
             on_progress(status="downloading", percent=5, stage="Downloading...")
         total_size = asset["size"]
         downloaded = 0
-        async with httpx.AsyncClient(follow_redirects=True) as client:
-            async with client.stream("GET", asset["browser_download_url"]) as resp:
-                resp.raise_for_status()
-                with open(dest_path, "wb") as f:
-                    async for chunk in resp.aiter_bytes():
-                        f.write(chunk)
-                        downloaded += len(chunk)
-                        if on_progress and total_size > 0:
-                            pct = 5 + int(downloaded / total_size * 70)
-                            on_progress(status="downloading", percent=min(pct, 75), stage=f"Downloading... ({downloaded//1024//1024} MB / {total_size//1024//1024} MB)")
+        partial_path = dest_path.with_suffix(dest_path.suffix + ".part")
+        timeout = httpx.Timeout(120.0, connect=15.0)
+        try:
+            async with httpx.AsyncClient(follow_redirects=True, timeout=timeout) as client:
+                async with client.stream("GET", asset["browser_download_url"]) as resp:
+                    resp.raise_for_status()
+                    with open(partial_path, "wb") as f:
+                        async for chunk in resp.aiter_bytes():
+                            f.write(chunk)
+                            downloaded += len(chunk)
+                            if on_progress and total_size > 0:
+                                pct = 5 + int(downloaded / total_size * 70)
+                                on_progress(status="downloading", percent=min(pct, 75), stage=f"Downloading... ({downloaded//1024//1024} MB / {total_size//1024//1024} MB)")
+            partial_path.replace(dest_path)
+        except Exception:
+            partial_path.unlink(missing_ok=True)
+            raise
 
     extract_dir = driver_dir / "extracted"
     if not extract_dir.exists():

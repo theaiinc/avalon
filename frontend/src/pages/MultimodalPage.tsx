@@ -34,7 +34,7 @@ function modelCapabilities(model: LocalModel): MultimodalModality[] {
   const markers: Record<MultimodalModality, string[]> = {
     tts: ['tts', 'text-to-speech', 'speech-synthesis', 'kokoro', 'bark', 'piper'],
     stt: ['whisper', 'speech-to-text', 'automatic-speech-recognition', 'wav2vec', 'asr'],
-    imagegen: ['flux', 'stable-diffusion', 'stable_diffusion', 'sdxl', 'text-to-image', 'imagegen', 'diffusion'],
+    imagegen: ['flux', 'stable-diffusion', 'stable_diffusion', 'sdxl', 'qwen-image', 'qwen_image', 'text-to-image', 'imagegen', 'diffusion'],
     videogen: ['video-generation', 'video_generation', 'cogvideo', 'hunyuan-video', 'mochi', 'animatediff', 'text-to-video'],
   };
   return modalities.filter(({ value }) => markers[value].some((marker) => text.includes(marker))).map(({ value }) => value);
@@ -54,8 +54,18 @@ export default function MultimodalPage() {
   const [modelPath, setModelPath] = useState('');
   const [executableId, setExecutableId] = useState('');
   const [input, setInput] = useState('');
+  const [negativePrompt, setNegativePrompt] = useState('');
+  const [imageBase64, setImageBase64] = useState('');
+  const [imageName, setImageName] = useState('');
+  const [imageWidth, setImageWidth] = useState(1024);
+  const [imageHeight, setImageHeight] = useState(1024);
+  const [imageSteps, setImageSteps] = useState(28);
+  const [imageGuidance, setImageGuidance] = useState(2.5);
+  const [imageSeed, setImageSeed] = useState(-1);
   const [promptHistory, setPromptHistory] = useState<string[]>([]);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const [savedPage, setSavedPage] = useState(1);
+  const [historyPage, setHistoryPage] = useState(1);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
 
@@ -82,7 +92,7 @@ export default function MultimodalPage() {
   const compatibleCases = useMemo(() => cases.filter((c) => c.modality === modality), [cases, modality]);
   const savedTests = useMemo(() => {
     const seen = new Set<string>();
-    return compatibleCases
+    return [...compatibleCases].reverse()
       .map((testCase) => ({
         testCase,
         profile: compatibleProfiles.find((profile) => profile.id === testCase.profile_id) || compatibleProfiles[0],
@@ -95,6 +105,25 @@ export default function MultimodalPage() {
         return true;
       });
   }, [compatibleCases, compatibleProfiles]);
+  const pageSize = 5;
+  const savedPageCount = Math.max(1, Math.ceil(savedTests.length / pageSize));
+  const historyPageCount = Math.max(1, Math.ceil(runs.length / pageSize));
+  const visibleSavedTests = savedTests.slice((savedPage - 1) * pageSize, savedPage * pageSize);
+  const sortedRuns = useMemo(
+    () => [...runs].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
+    [runs],
+  );
+  const visibleRuns = sortedRuns.slice((historyPage - 1) * pageSize, historyPage * pageSize);
+  useEffect(() => {
+    setSavedPage(1);
+    setHistoryPage(1);
+  }, [modality]);
+  useEffect(() => {
+    setSavedPage((page) => Math.min(page, savedPageCount));
+  }, [savedPageCount]);
+  useEffect(() => {
+    setHistoryPage((page) => Math.min(page, historyPageCount));
+  }, [historyPageCount]);
   const compatibleModels = useMemo(
     () => models.filter((localModel) => modelCapabilities(localModel).includes(modality)),
     [models, modality],
@@ -102,6 +131,7 @@ export default function MultimodalPage() {
   const generatedUrl = gatewayAdapterUrl(modality);
   const activeRun = runs.find((run) => run.id === activeRunId)
     || runs.find((run) => ['queued', 'running', 'cancelling'].includes(run.state))
+    || [...runs].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0]
     || null;
   useEffect(() => {
     if (!compatibleModels.some((localModel) => localModel.id === name)) {
@@ -150,7 +180,19 @@ export default function MultimodalPage() {
       });
       const testCase = await api.saveMultimodalCase({
         name: `${name} test`, modality,
-        input: modality === 'stt' ? { audio_base64: input } : { prompt: input, text: input },
+        input: modality === 'stt' ? { audio_base64: input } : modality === 'imagegen' ? {
+          prompt: input,
+          text: input,
+          ...(imageBase64 ? { image_base64: imageBase64 } : {}),
+          options: {
+            negative_prompt: negativePrompt,
+            width: imageWidth,
+            height: imageHeight,
+            steps: imageSteps,
+            guidance: imageGuidance,
+            seed: imageSeed,
+          },
+        } : { prompt: input, text: input },
         assertions: {},
         profile_id: profile.profile.id,
       });
@@ -251,6 +293,58 @@ export default function MultimodalPage() {
             placeholder={modality === 'stt' ? 'Base64 audio input' : modality === 'tts' ? 'Text to synthesize' : 'Prompt'}
             className="mt-1 w-full bg-gray-800 border border-gray-700 rounded px-3 py-2" />
         </label>
+        {modality === 'imagegen' && (
+          <div className="grid grid-cols-2 gap-3 mb-4 text-sm">
+            <label className="col-span-2">Image to edit (optional)
+              <input type="file" accept="image/png,image/jpeg,image/webp"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  if (file.size > 25 * 1024 * 1024) {
+                    setMessage('Reference images must be 25 MB or smaller.');
+                    e.currentTarget.value = '';
+                    return;
+                  }
+                  const reader = new FileReader();
+                  reader.onload = () => {
+                    const dataUrl = String(reader.result || '');
+                    setImageBase64(dataUrl.split(',')[1] || '');
+                    setImageName(file.name);
+                    setMessage('');
+                  };
+                  reader.readAsDataURL(file);
+                }}
+                className="mt-1 block w-full text-xs text-gray-400 file:mr-3 file:rounded file:border-0 file:bg-gray-700 file:px-3 file:py-2 file:text-gray-200 hover:file:bg-gray-600" />
+              <span className="block text-xs text-gray-600 mt-1">
+                {imageName ? `${imageName} selected` : 'PNG, JPEG, or WebP; Avalon converts it to base64 before sending.'}
+              </span>
+            </label>
+            <label>Negative prompt
+              <input value={negativePrompt} onChange={(e) => setNegativePrompt(e.target.value)}
+                className="mt-1 w-full bg-gray-800 border border-gray-700 rounded px-3 py-2" />
+            </label>
+            <label>Seed
+              <input type="number" value={imageSeed} onChange={(e) => setImageSeed(Number(e.target.value))}
+                className="mt-1 w-full bg-gray-800 border border-gray-700 rounded px-3 py-2" />
+            </label>
+            <label>Width
+              <input type="number" min={64} max={4096} value={imageWidth} onChange={(e) => setImageWidth(Number(e.target.value))}
+                className="mt-1 w-full bg-gray-800 border border-gray-700 rounded px-3 py-2" />
+            </label>
+            <label>Height
+              <input type="number" min={64} max={4096} value={imageHeight} onChange={(e) => setImageHeight(Number(e.target.value))}
+                className="mt-1 w-full bg-gray-800 border border-gray-700 rounded px-3 py-2" />
+            </label>
+            <label>Steps
+              <input type="number" min={1} max={100} value={imageSteps} onChange={(e) => setImageSteps(Number(e.target.value))}
+                className="mt-1 w-full bg-gray-800 border border-gray-700 rounded px-3 py-2" />
+            </label>
+            <label>Guidance
+              <input type="number" min={0} max={20} step={0.1} value={imageGuidance} onChange={(e) => setImageGuidance(Number(e.target.value))}
+                className="mt-1 w-full bg-gray-800 border border-gray-700 rounded px-3 py-2" />
+            </label>
+          </div>
+        )}
         {promptHistory.length > 0 && (
           <div className="mb-4">
             <div className="text-xs text-gray-500 mb-2">Previous examples</div>
@@ -279,7 +373,7 @@ export default function MultimodalPage() {
         <div className="bg-gray-900 border border-gray-800 rounded-lg p-5 mb-6">
           <h3 className="font-semibold mb-3">Saved {modality} tests</h3>
           <div className="space-y-2">
-            {savedTests.map(({ profile, testCase }) => (
+            {visibleSavedTests.map(({ profile, testCase }) => (
               <div key={testCase.id} className="flex items-center justify-between bg-gray-800 rounded p-3 text-sm">
                 <span>{profile.name} · {testCase.name}</span>
                 <div className="flex gap-2">
@@ -289,6 +383,7 @@ export default function MultimodalPage() {
               </div>
             ))}
           </div>
+          <Pagination page={savedPage} pageCount={savedPageCount} onChange={setSavedPage} />
         </div>
       )}
 
@@ -296,8 +391,9 @@ export default function MultimodalPage() {
         <h3 className="font-semibold mb-3">Run history</h3>
         <div className="space-y-2">
           {runs.length === 0 && <p className="text-sm text-gray-500">No multimodal runs yet.</p>}
-          {runs.map((run) => <RunRow key={run.id} run={run} onCancel={() => api.cancelMultimodalRun(run.id).then(reload)} />)}
+          {visibleRuns.map((run) => <RunRow key={run.id} run={run} onCancel={() => api.cancelMultimodalRun(run.id).then(reloadRuns)} />)}
         </div>
+        <Pagination page={historyPage} pageCount={historyPageCount} onChange={setHistoryPage} />
       </div>
     </div>
   );
@@ -318,6 +414,27 @@ function RunRow({ run, onCancel }: { run: MultimodalRun; onCancel: () => void })
       </div>}
       {run.result?.transcript && <p className="text-sm text-gray-300 mt-2">{run.result.transcript}</p>}
       {artifact && <a href={artifactUrl(artifact.url)} target="_blank" rel="noreferrer" className="inline-block text-xs text-blue-400 hover:underline mt-2">Open {artifact.filename}</a>}
+    </div>
+  );
+}
+
+function Pagination({ page, pageCount, onChange }: {
+  page: number;
+  pageCount: number;
+  onChange: (page: number) => void;
+}) {
+  if (pageCount <= 1) return null;
+  return (
+    <div className="flex items-center justify-end gap-2 mt-4 text-xs">
+      <button disabled={page === 1} onClick={() => onChange(page - 1)}
+        className="px-2 py-1 rounded bg-gray-800 text-gray-300 disabled:opacity-40">
+        Previous
+      </button>
+      <span className="text-gray-500">Page {page} of {pageCount}</span>
+      <button disabled={page === pageCount} onClick={() => onChange(page + 1)}
+        className="px-2 py-1 rounded bg-gray-800 text-gray-300 disabled:opacity-40">
+        Next
+      </button>
     </div>
   );
 }
@@ -359,7 +476,7 @@ function RunCanvas({ run }: { run: MultimodalRun | null }) {
             <p className="text-blue-300 capitalize">{run.progress?.stage || run.state}…</p>
             <p className="text-sm text-gray-300 mt-1">{run.progress?.detail || 'Preparing the adapter'}</p>
             <p className="text-xs text-gray-500 mt-1">Elapsed {duration} · timeout {timeout}s</p>
-            <div className="w-56 h-1.5 bg-gray-800 rounded-full mt-3 overflow-hidden">
+            <div className="w-full h-1.5 bg-gray-800 rounded-full mt-3 overflow-hidden">
               <div className="h-full bg-blue-500 transition-all" style={{ width: `${progressWidth}%` }} />
             </div>
             <p className="text-[11px] text-gray-600 mt-1">Progress is time-based; generation speed depends on the model and hardware.</p>

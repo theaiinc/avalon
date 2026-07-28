@@ -183,11 +183,39 @@ def create_multimodal_run(profile_id: str, case_id: str) -> Dict[str, Any]:
 def run_multimodal_test(
     modality: str,
     model_id: str,
-    input_data: Dict[str, Any],
+    prompt: str = "",
+    reference_image_base64: str = "",
+    negative_prompt: str = "",
+    width: int = 1024,
+    height: int = 1024,
+    steps: int = 28,
+    guidance: float = 2.5,
+    seed: int = -1,
     mode: str = "",
     model_path: str = "",
 ) -> Dict[str, Any]:
-    """Run TTS, STT, image-generation, or video-generation; never use chat completions for these models."""
+    """Run TTS, STT, image-generation, or video-generation.
+
+    Use reference_image_base64 for Kontext-style image editing. For example,
+    provide modality="imagegen", prompt="preserve identity, change pose",
+    reference_image_base64="<PNG/JPEG base64>", width=1024, height=1024,
+    steps=28, guidance=2.5, and seed=-1. Never use chat completions for
+    multimodal models.
+    """
+    input_data: Dict[str, Any] = {
+        "prompt": prompt,
+        "text": prompt,
+        "options": {
+            "negative_prompt": negative_prompt,
+            "width": width,
+            "height": height,
+            "steps": steps,
+            "guidance": guidance,
+            "seed": seed,
+        },
+    }
+    if reference_image_base64:
+        input_data["image_base64"] = reference_image_base64
     return _client().run_multimodal_test(modality, model_id, input_data, mode or None, model_path)
 
 
@@ -247,8 +275,21 @@ def chat_completion_openai(
     inference_url: str = DEFAULT_INFERENCE_URL,
     max_tokens: int = 512,
     temperature: float = 0.7,
+    reference_image_base64: str = "",
+    negative_prompt: str = "",
+    width: int = 1024,
+    height: int = 1024,
+    steps: int = 28,
+    guidance: float = 2.5,
+    seed: int = -1,
 ) -> Dict[str, Any]:
-    """Send one user message to the local OpenAI-compatible inference API."""
+    """Send text to an LLM, or edit/generate an image when a multimodal model is selected.
+
+    For FLUX/Kontext image work, pass reference_image_base64 for the source image
+    and use negative_prompt, width, height, steps, guidance, and seed for image
+    preferences. This compatibility tool routes those requests to the image
+    runner instead of /v1/chat/completions.
+    """
     multimodal_markers = ("flux", "stable-diffusion", "imagegen", "text-to-image", "cogvideo", "tts", "whisper")
     if any(marker in model.lower() for marker in multimodal_markers):
         modality = "imagegen" if any(marker in model.lower() for marker in (
@@ -257,7 +298,19 @@ def chat_completion_openai(
         return _client().run_multimodal_test(
             modality,
             model,
-            {"prompt": message, "text": message},
+            {
+                "prompt": message,
+                "text": message,
+                **({"image_base64": reference_image_base64} if reference_image_base64 else {}),
+                "options": {
+                    "negative_prompt": negative_prompt,
+                    "width": width,
+                    "height": height,
+                    "steps": steps,
+                    "guidance": guidance,
+                    "seed": seed,
+                },
+            },
             "builtin" if modality == "imagegen" else None,
         )
     messages = []
