@@ -136,6 +136,10 @@ function spawnBackend() {
     AVALON_PORT: String(dashboardPort),
     AVALON_GATEWAY_PORT: String(gatewayPort),
     AVALON_GATEWAY_HOST: process.env.AVALON_GATEWAY_HOST || '0.0.0.0',
+    // Lower than the library default (3072 MB): this Mac's 18 GB unified
+    // memory is shared with other running apps, so a smaller safety
+    // reserve leaves small/medium local models admittable in practice.
+    AVALON_MEMORY_RESERVE_MB: process.env.AVALON_MEMORY_RESERVE_MB || '1024',
     AVALON_API_KEY: apiKey(),
     AVALON_DATA_DIR: dataDir,
   };
