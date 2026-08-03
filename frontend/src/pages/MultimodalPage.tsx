@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { api } from '../api/client';
 import type { LocalModel, MultimodalCase, MultimodalModality, MultimodalProfile, MultimodalRun } from '../types';
@@ -10,6 +10,48 @@ const modalities: { value: MultimodalModality; label: string }[] = [
   { value: 'videogen', label: 'Video generation' },
 ];
 const PROMPTS_KEY = 'avalon_multimodal_prompts';
+const MAX_AUDIO_BYTES = 100 * 1024 * 1024;
+const RECORDING_MIME_TYPES = [
+  'audio/webm;codecs=opus',
+  'audio/webm',
+  'audio/ogg;codecs=opus',
+  'audio/mp4',
+];
+
+function supportedRecordingMimeType(): string | null {
+  if (typeof MediaRecorder === 'undefined') return null;
+  if (typeof MediaRecorder.isTypeSupported !== 'function') return RECORDING_MIME_TYPES[0];
+  return RECORDING_MIME_TYPES.find((mime) => {
+    try {
+      return MediaRecorder.isTypeSupported(mime);
+    } catch {
+      return false;
+    }
+  }) || '';
+}
+
+function recordingExtension(mime: string): string {
+  const type = mime.split(';', 1)[0].toLowerCase();
+  return {
+    'audio/webm': 'webm',
+    'audio/ogg': 'ogg',
+    'audio/mp4': 'm4a',
+    'audio/wav': 'wav',
+  }[type] || 'webm';
+}
+
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || '').split(',')[1] || '');
+    reader.onerror = () => reject(new Error('The recording could not be read.'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+function formatRecordingTime(seconds: number): string {
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+}
 
 function gatewayAdapterUrl(modality: MultimodalModality): string {
   const path = {
@@ -54,6 +96,11 @@ export default function MultimodalPage() {
   const [modelPath, setModelPath] = useState('');
   const [executableId, setExecutableId] = useState('');
   const [input, setInput] = useState('');
+  const [audioName, setAudioName] = useState('');
+  const [audioMime, setAudioMime] = useState('audio/wav');
+  const [language, setLanguage] = useState('en');
+  const [transcriptMode, setTranscriptMode] = useState<'verbatim' | 'intended'>('verbatim');
+  const [wordTimestamps, setWordTimestamps] = useState(true);
   const [negativePrompt, setNegativePrompt] = useState('');
   const [imageBase64, setImageBase64] = useState('');
   const [imageName, setImageName] = useState('');
@@ -68,6 +115,153 @@ export default function MultimodalPage() {
   const [historyPage, setHistoryPage] = useState(1);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
+  const [recording, setRecording] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [recordingStatus, setRecordingStatus] = useState('');
+  const [recordingError, setRecordingError] = useState('');
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const recordingStreamRef = useRef<MediaStream | null>(null);
+  const recordingChunksRef = useRef<Blob[]>([]);
+  const recordingStartedAtRef = useRef<number | null>(null);
+
+  const releaseRecordingStream = () => {
+    recordingStreamRef.current?.getTracks().forEach((track) => track.stop());
+    recordingStreamRef.current = null;
+    recorderRef.current = null;
+  };
+
+  const finishRecording = (recorder: MediaRecorder, requestedMime: string) => {
+    const recordedMime = recorder.mimeType || requestedMime || 'audio/webm';
+    const blob = new Blob(recordingChunksRef.current, { type: recordedMime });
+    recordingChunksRef.current = [];
+    const elapsed = recordingStartedAtRef.current
+      ? Math.max(0, Math.floor((Date.now() - recordingStartedAtRef.current) / 1000))
+      : recordingSeconds;
+    recordingStartedAtRef.current = null;
+    releaseRecordingStream();
+    setRecording(false);
+    if (!blob.size) {
+      setRecordingStatus('');
+      setRecordingError('The microphone produced an empty recording. Please try again.');
+      return;
+    }
+    if (blob.size > MAX_AUDIO_BYTES) {
+      setRecordingStatus('');
+      setRecordingError('Audio recordings must be 100 MB or smaller.');
+      return;
+    }
+    void blobToBase64(blob).then((base64) => {
+      setInput(base64);
+      setAudioName(`recording-${Date.now()}.${recordingExtension(recordedMime)}`);
+      setAudioMime(recordedMime);
+      setRecordingSeconds(elapsed);
+      setRecordingStatus(`Recording ready (${formatRecordingTime(elapsed)}).`);
+      setRecordingError('');
+    }).catch((error: Error) => {
+      setRecordingStatus('');
+      setRecordingError(error.message);
+    });
+  };
+
+  const stopRecording = () => {
+    const recorder = recorderRef.current;
+    if (!recorder) return;
+    setRecordingStatus('Processing recording…');
+    try {
+      if (recorder.state === 'inactive') {
+        finishRecording(recorder, recorder.mimeType);
+      } else {
+        recorder.stop();
+      }
+    } catch {
+      recorder.onstop = null;
+      recorder.ondataavailable = null;
+      releaseRecordingStream();
+      setRecording(false);
+      setRecordingStatus('');
+      setRecordingError('The recording could not be stopped. Please try again.');
+    }
+  };
+
+  const startRecording = async () => {
+    if (recording) return;
+    setRecordingError('');
+    setRecordingStatus('');
+    setMessage('');
+    const mimeType = supportedRecordingMimeType();
+    if (mimeType === null || !navigator.mediaDevices?.getUserMedia) {
+      setRecordingError('Microphone recording is not supported in this browser.');
+      return;
+    }
+    let stream: MediaStream | null = null;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      recordingStreamRef.current = stream;
+      let recorder: MediaRecorder;
+      try {
+        recorder = mimeType
+          ? new MediaRecorder(stream, { mimeType })
+          : new MediaRecorder(stream);
+      } catch {
+        // Some browsers support MediaRecorder but reject every advertised MIME type.
+        recorder = new MediaRecorder(stream);
+      }
+      recorderRef.current = recorder;
+      recordingChunksRef.current = [];
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) recordingChunksRef.current.push(event.data);
+      };
+      recorder.onerror = () => {
+        recorder.onstop = null;
+        recorder.ondataavailable = null;
+        releaseRecordingStream();
+        setRecording(false);
+        setRecordingStatus('');
+        setRecordingError('The microphone recording failed. Please try again.');
+      };
+      recorder.onstop = () => finishRecording(recorder, mimeType);
+      recorder.start();
+      recordingStartedAtRef.current = Date.now();
+      setRecordingSeconds(0);
+      setRecording(true);
+      setRecordingStatus(`Recording… ${formatRecordingTime(0)}`);
+    } catch (error) {
+      stream?.getTracks().forEach((track) => track.stop());
+      recordingStreamRef.current = null;
+      const errorName = (error as { name?: string })?.name;
+      setRecordingError(
+        errorName === 'NotAllowedError' || errorName === 'SecurityError'
+          ? 'Microphone permission was denied. Allow microphone access and try again.'
+          : 'Unable to access the microphone. Check your device and browser permissions.',
+      );
+    }
+  };
+
+  useEffect(() => {
+    if (!recording) return;
+    const timer = window.setInterval(() => {
+      if (recordingStartedAtRef.current) {
+        setRecordingSeconds(Math.max(0, Math.floor((Date.now() - recordingStartedAtRef.current) / 1000)));
+      }
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [recording]);
+
+  useEffect(() => {
+    if (modality !== 'stt' && recorderRef.current) stopRecording();
+  }, [modality]);
+
+  useEffect(() => () => {
+    const recorder = recorderRef.current;
+    if (recorder) {
+      recorder.onstop = null;
+      recorder.ondataavailable = null;
+      try {
+        if (recorder.state !== 'inactive') recorder.stop();
+      } catch { /* the page is being unmounted */ }
+    }
+    releaseRecordingStream();
+  }, []);
 
   const reload = async () => {
     const [p, c, r, caps, localModels] = await Promise.all([
@@ -158,8 +352,13 @@ export default function MultimodalPage() {
     }
   }, [modality]);
   useEffect(() => {
-    setMode(modality === 'imagegen' ? 'builtin' : 'http');
-  }, [modality]);
+    const selected = models.find((localModel) => localModel.id === name);
+    setMode(
+      modality === 'imagegen' || (modality === 'stt' && selected?.format === 'crisperwhisper')
+        ? 'builtin'
+        : 'http',
+    );
+  }, [modality, models, name]);
 
   const saveAndRun = async () => {
     if (!name.trim() || !input.trim()) { setMessage('Enter a profile name and test input.'); return; }
@@ -174,13 +373,21 @@ export default function MultimodalPage() {
     setBusy(true); setMessage('');
     try {
       const profile = await api.saveMultimodalProfile({
-        name, model, model_path: modelPath, modality, mode, url: mode === 'http' ? generatedUrl : undefined,
+        name, model, model_path: modelPath, model_format: models.find((localModel) => localModel.id === name)?.format,
+        modality, mode, url: mode === 'http' ? generatedUrl : undefined,
         allow_private_network: mode === 'http',
         executable_id: mode === 'local' ? executableId : undefined,
       });
       const testCase = await api.saveMultimodalCase({
         name: `${name} test`, modality,
-        input: modality === 'stt' ? { audio_base64: input } : modality === 'imagegen' ? {
+        input: modality === 'stt' ? {
+          audio_base64: input,
+          audio_name: audioName,
+          audio_mime: audioMime,
+          language,
+          mode: transcriptMode,
+          word_timestamps: wordTimestamps,
+        } : modality === 'imagegen' ? {
           prompt: input,
           text: input,
           ...(imageBase64 ? { image_base64: imageBase64 } : {}),
@@ -201,7 +408,9 @@ export default function MultimodalPage() {
       await reloadRuns();
       setMessage(
         mode === 'builtin'
-          ? 'Run queued. Avalon will provision the local image runtime and required model files.'
+          ? modality === 'stt'
+            ? 'Run queued. Avalon will transcribe the audio with the selected built-in speech adapter.'
+            : 'Run queued. Avalon will provision the local image runtime and required model files.'
           : mode === 'local'
           ? 'Run queued. Local plugins must be approved by the server allowlist.'
           : 'Run queued. The configured HTTP adapter will be contacted.',
@@ -267,13 +476,15 @@ export default function MultimodalPage() {
             )}
           </label>
         <div className="flex gap-5 my-4 text-sm">
-          {modality === 'imagegen' && <label><input type="radio" checked={mode === 'builtin'} onChange={() => setMode('builtin')} className="mr-2 accent-blue-600" />Avalon auto runtime</label>}
+          {(modality === 'imagegen' || modality === 'stt') && <label><input type="radio" checked={mode === 'builtin'} onChange={() => setMode('builtin')} className="mr-2 accent-blue-600" />Avalon auto runtime</label>}
           <label><input type="radio" checked={mode === 'http'} onChange={() => setMode('http')} className="mr-2 accent-blue-600" />HTTP adapter</label>
           <label><input type="radio" checked={mode === 'local'} onChange={() => setMode('local')} className="mr-2 accent-blue-600" />Approved local plugin</label>
         </div>
         {mode === 'builtin' ? (
           <div className="bg-blue-900/20 border border-blue-800 rounded p-3 mb-4 text-sm text-blue-200">
-            Avalon will download stable-diffusion.cpp and the required FLUX files on first run, then generate locally.
+            {modality === 'stt'
+              ? 'Avalon will transcribe audio with the selected built-in speech adapter. Verbatim mode preserves disfluencies; intended mode produces a cleaner transcript.'
+              : 'Avalon will download stable-diffusion.cpp and the required FLUX files on first run, then generate locally.'}
           </div>
         ) : mode === 'http' ? (
           <label className="block text-sm mb-4">Adapter URL
@@ -288,11 +499,71 @@ export default function MultimodalPage() {
             <span className="block text-xs text-gray-600 mt-1">Shell commands are not accepted; IDs resolve through the server-side allowlist.</span>
           </label>
         )}
-        <label className="block text-sm mb-4">Test input
-          <textarea value={input} onChange={(e) => setInput(e.target.value)} rows={3}
-            placeholder={modality === 'stt' ? 'Base64 audio input' : modality === 'tts' ? 'Text to synthesize' : 'Prompt'}
-            className="mt-1 w-full bg-gray-800 border border-gray-700 rounded px-3 py-2" />
-        </label>
+        {modality === 'stt' ? (
+          <div className="mb-4 text-sm">
+            <label>Audio file
+              <input type="file" accept="audio/*"
+                disabled={recording}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  if (file.size > MAX_AUDIO_BYTES) {
+                    setMessage('Audio files must be 100 MB or smaller.');
+                    e.currentTarget.value = '';
+                    return;
+                  }
+                  const reader = new FileReader();
+                  reader.onload = () => {
+                    const dataUrl = String(reader.result || '');
+                    setInput(dataUrl.split(',')[1] || '');
+                    setAudioName(file.name);
+                    setAudioMime(file.type || 'audio/wav');
+                    setRecordingStatus('');
+                    setRecordingError('');
+                    setMessage('');
+                  };
+                  reader.readAsDataURL(file);
+                }}
+                className="mt-1 block w-full text-xs text-gray-400 file:mr-3 file:rounded file:border-0 file:bg-gray-700 file:px-3 file:py-2 file:text-gray-200 hover:file:bg-gray-600" />
+            </label>
+            <div className="mt-2 flex flex-wrap items-center gap-3">
+              <button type="button" onClick={recording ? stopRecording : startRecording}
+                className={`rounded px-3 py-2 text-xs ${recording ? 'bg-red-700 hover:bg-red-600' : 'bg-gray-700 hover:bg-gray-600'}`}>
+                {recording ? `Stop (${formatRecordingTime(recordingSeconds)})` : 'Record'}
+              </button>
+              <span role="status" className={`text-xs ${recording ? 'text-red-300' : 'text-gray-400'}`}>
+                {recording ? `Recording… ${formatRecordingTime(recordingSeconds)}` : recordingStatus}
+              </span>
+            </div>
+            {recordingError && <p role="alert" className="mt-2 text-xs text-red-300">{recordingError}</p>}
+            <span className="block text-xs text-gray-600 mt-1">
+              {audioName ? `${audioName} selected` : 'WAV, MP3, FLAC, OGG, or another browser-supported audio file.'}
+            </span>
+            <div className="grid grid-cols-2 gap-3 mt-3">
+              <label>Language
+                <input value={language} onChange={(e) => setLanguage(e.target.value)} placeholder="en"
+                  className="mt-1 w-full bg-gray-800 border border-gray-700 rounded px-3 py-2" />
+              </label>
+              <label>Transcript mode
+                <select value={transcriptMode} onChange={(e) => setTranscriptMode(e.target.value as 'verbatim' | 'intended')}
+                  className="mt-1 w-full bg-gray-800 border border-gray-700 rounded px-3 py-2">
+                  <option value="verbatim">Verbatim</option>
+                  <option value="intended">Intended</option>
+                </select>
+              </label>
+            </div>
+            <label className="inline-flex items-center mt-3">
+              <input type="checkbox" checked={wordTimestamps} onChange={(e) => setWordTimestamps(e.target.checked)} className="mr-2 accent-blue-600" />
+              Return word timestamps
+            </label>
+          </div>
+        ) : (
+          <label className="block text-sm mb-4">Test input
+            <textarea value={input} onChange={(e) => setInput(e.target.value)} rows={3}
+              placeholder={modality === 'tts' ? 'Text to synthesize' : 'Prompt'}
+              className="mt-1 w-full bg-gray-800 border border-gray-700 rounded px-3 py-2" />
+          </label>
+        )}
         {modality === 'imagegen' && (
           <div className="grid grid-cols-2 gap-3 mb-4 text-sm">
             <label className="col-span-2">Image to edit (optional)
@@ -502,6 +773,18 @@ function RunCanvas({ run }: { run: MultimodalRun | null }) {
                 ))}
               </div>
               {run.result.transcript && <p className="text-gray-300 whitespace-pre-wrap">{run.result.transcript}</p>}
+              {run.result.words && run.result.words.length > 0 && (
+                <details className="rounded border border-gray-800 p-3 text-xs">
+                  <summary className="cursor-pointer text-gray-400">Word timestamps ({run.result.words.length})</summary>
+                  <div className="mt-2 max-h-32 overflow-y-auto space-y-1 text-gray-300">
+                    {run.result.words.map((word, index) => (
+                      <span key={`${word.word}-${index}`} className="inline-block mr-2">
+                        {word.word} <span className="text-gray-600">({word.start?.toFixed(2)}–{word.end?.toFixed(2)})</span>
+                      </span>
+                    ))}
+                  </div>
+                </details>
+              )}
               {run.result.assertions && (
                 <p className={run.result.assertions.passed ? 'text-green-400' : 'text-red-400'}>
                   Quality assertions: {run.result.assertions.passed ? 'passed' : 'failed'}

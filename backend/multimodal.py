@@ -113,6 +113,7 @@ def validate_profile(profile: dict) -> dict:
         "input_format": profile.get("input_format", "json"),
         "secret_ref": profile.get("secret_ref", ""),
         "model_path": str(profile.get("model_path", "")),
+        "model_format": str(profile.get("model_format", profile.get("format", ""))),
     }
     if clean["secret_ref"] and not re.fullmatch(r"env:[A-Za-z_][A-Za-z0-9_]*", clean["secret_ref"]):
         raise ValueError("secret_ref must use the env:NAME format")
@@ -120,8 +121,16 @@ def validate_profile(profile: dict) -> dict:
         raise ValueError("input_format must be json or multipart")
 
     if mode == "builtin":
-        if modality != "imagegen":
-            raise ValueError("builtin adapter currently supports imagegen only")
+        if modality == "imagegen":
+            if not clean["model_path"]:
+                raise ValueError("automatic image generation requires a local model path")
+        elif modality == "stt":
+            if clean["model_format"] != "crisperwhisper":
+                raise ValueError("automatic STT requires a downloaded crisperwhisper model")
+            if not clean["model_path"]:
+                raise ValueError("automatic STT requires a local model path")
+        else:
+            raise ValueError("builtin adapter currently supports imagegen and crisperwhisper STT only")
     elif mode == "local":
         executable_id = profile.get("executable_id", "")
         allowlist = _plugin_allowlist()
@@ -154,7 +163,7 @@ def capabilities() -> dict:
     return {
         "protocol": PROTOCOL_VERSION,
         "modalities": sorted(MODALITIES),
-        "modes": ["local", "http"],
+        "modes": ["builtin", "local", "http"],
         "approved_executables": sorted(_plugin_allowlist().keys()),
         "limits": {
             "max_artifact_bytes": MAX_ARTIFACT_BYTES,
@@ -459,6 +468,19 @@ def _run_http(profile: dict, case: dict) -> dict:
 
 
 def _run_builtin(run: dict, profile: dict, case: dict) -> dict:
+    if profile["modality"] == "stt":
+        from crisperwhisper_runtime import transcribe_audio
+
+        case_input = case.get("input", {})
+        return transcribe_audio(
+            profile["model_path"],
+            case_input.get("audio_base64", ""),
+            audio_name=str(case_input.get("audio_name", "")),
+            audio_mime=str(case_input.get("audio_mime", "audio/wav")),
+            language=str(case_input.get("language", "en")),
+            mode=str(case_input.get("mode", "verbatim")),
+            word_timestamps=bool(case_input.get("word_timestamps", True)),
+        )
     if profile["modality"] != "imagegen" or not profile.get("model_path"):
         raise ValueError("automatic image generation requires a local model path")
     from diffusion_runtime import generate_flux
@@ -502,7 +524,12 @@ def _execute(run: dict, profile: dict, case: dict) -> None:
             _update_run(run["id"], progress={"stage": "generating", "detail": "Running the approved local plugin"})
             payload = _run_local(run, profile, case)
         elif profile["mode"] == "builtin":
-            _update_run(run["id"], progress={"stage": "generating", "detail": "Provisioning runtime and generating the image"})
+            detail = (
+                "Loading the built-in speech runtime and transcribing audio"
+                if case["modality"] == "stt"
+                else "Provisioning runtime and generating the image"
+            )
+            _update_run(run["id"], progress={"stage": "generating", "detail": detail})
             payload = _run_builtin(run, profile, case)
         else:
             _update_run(run["id"], progress={"stage": "waiting", "detail": "Waiting for the HTTP adapter response"})
@@ -523,6 +550,9 @@ def _execute(run: dict, profile: dict, case: dict) -> None:
                 "protocol": PROTOCOL_VERSION, "modality": case["modality"],
                 "metrics": metrics, "artifacts": artifacts,
                 "transcript": payload.get("transcript"),
+                "words": payload.get("words", []),
+                "audio_duration_sec": payload.get("audio_duration_sec"),
+                "transcript_mode": payload.get("transcript_mode"),
                 "assertions": _evaluate_assertions(payload, case.get("assertions", {})),
             })
     except Exception as exc:

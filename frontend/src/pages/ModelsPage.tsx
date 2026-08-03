@@ -40,6 +40,8 @@ function useDownloadProgress() {
 }
 
 const RECENT_KEY = 'model_search_history';
+const CUSTOM_BUILD_FORMAT = 'crisperwhisper';
+type CustomBuildView = 'supported' | 'unsupported';
 
 export default function ModelsPage() {
   const navigate = useNavigate();
@@ -55,6 +57,7 @@ export default function ModelsPage() {
   const [keyToDlId, setKeyToDlId] = useState<Record<string, string>>({});
   const [activeDownloads, setActiveDownloads] = useState<(DownloadProgress & { id: string; kind?: string; repo_id?: string; filename?: string })[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [customBuildView, setCustomBuildView] = useState<CustomBuildView>('supported');
   const dl = useDownloadProgress();
 
   const loadLocal = () => {
@@ -70,8 +73,10 @@ export default function ModelsPage() {
       .then(({ downloads }) => {
         setActiveDownloads(downloads);
         downloads.forEach((download) => {
-          if (download.kind !== 'model' || !download.repo_id || !download.filename) return;
-          const key = `${download.repo_id}/${download.filename}`;
+          if (!['model', 'crisperwhisper'].includes(download.kind || '') || !download.repo_id) return;
+          const key = download.kind === 'crisperwhisper'
+            ? download.repo_id
+            : `${download.repo_id}/${download.filename || ''}`;
           setKeyToDlId((prev) => ({ ...prev, [key]: download.id }));
           setBusyDl((prev) => ({ ...prev, [key]: true }));
           if (!dl.downloads[download.id]) dl.start(download.id);
@@ -173,22 +178,28 @@ export default function ModelsPage() {
     }
   }, [dl.downloads]);
 
+  const visibleSearchResults = modelFormat === CUSTOM_BUILD_FORMAT
+    ? searchResults.filter((model) => (model.supported !== false) === (customBuildView === 'supported'))
+    : searchResults;
+
   return (
     <div>
       <h2 className="text-2xl font-bold mb-6">Models</h2>
 
       <div className="bg-gray-900 rounded-lg p-4 mb-6">
         <h3 className="font-semibold mb-3">Local Models</h3>
-        {local.length === 0 && activeDownloads.filter((download) => download.kind === 'model').length === 0 ? (
+        {local.length === 0 && activeDownloads.filter((download) => ['model', 'crisperwhisper'].includes(download.kind || '')).length === 0 ? (
           <p className="text-gray-500 text-sm">No models downloaded. Search and download from HuggingFace below.</p>
         ) : (
           <div className="grid gap-3 md:grid-cols-2">
-            {activeDownloads.filter((download) => download.kind === 'model').map((download) => {
+            {activeDownloads.filter((download) => ['model', 'crisperwhisper'].includes(download.kind || '')).map((download) => {
               const progress = dl.downloads[download.id] || download;
               return (
                 <div key={`downloading-${download.id}`} className="bg-gray-800/60 rounded p-3 border border-gray-700 opacity-60">
                   <div className="font-medium text-sm truncate">{download.repo_id}</div>
-                  <div className="text-xs text-gray-500 mt-1 truncate">{download.filename}</div>
+                  <div className="text-xs text-gray-500 mt-1 truncate">
+                    {download.kind === 'crisperwhisper' ? 'Custom build files' : download.filename}
+                  </div>
                   <div className="mt-3 bg-gray-700 rounded-full h-2 overflow-hidden">
                     <div className="h-full bg-blue-500 transition-all duration-300" style={{ width: `${progress.percent}%` }} />
                   </div>
@@ -200,7 +211,8 @@ export default function ModelsPage() {
               <div key={m.id} className="bg-gray-800 rounded p-3 border border-gray-700">
                 <div className="font-medium text-sm truncate">{m.repo_id}</div>
                 <div className="text-xs text-gray-500 mt-1">
-                  {m.files.join(', ')} · {(m.size / 1024 / 1024 / 1024).toFixed(2)} GB
+                  <span className="text-blue-300">{m.format === CUSTOM_BUILD_FORMAT ? 'Custom build' : m.files.join(', ')}</span>
+                  {' · '}{(m.size / 1024 / 1024 / 1024).toFixed(2)} GB
                 </div>
                 <div className="mt-2 flex gap-2">
                   <button onClick={() => navigate(`/multimodal?model=${encodeURIComponent(m.id)}`)} className="px-2 py-0.5 text-xs bg-blue-700 rounded hover:bg-blue-600">
@@ -254,15 +266,51 @@ export default function ModelsPage() {
               onClick={() => handleSearch('openvino')}
               className={`px-3 py-1 text-xs rounded ${modelFormat === 'openvino' ? 'bg-blue-700 text-white' : 'bg-gray-700 text-gray-400 hover:text-white'}`}
             >OpenVINO (NPU)</button>
+            <button
+              onClick={() => handleSearch(CUSTOM_BUILD_FORMAT)}
+              className={`px-3 py-1 text-xs rounded ${modelFormat === CUSTOM_BUILD_FORMAT ? 'bg-blue-700 text-white' : 'bg-gray-700 text-gray-400 hover:text-white'}`}
+            >Custom builds</button>
           </div>
 
-        {searchResults.length > 0 && (
+        {modelFormat === CUSTOM_BUILD_FORMAT && (
+          <div className="mb-3 rounded border border-gray-700 bg-gray-800/60 p-3">
+            <div className="text-xs font-medium text-gray-300 mb-2">Custom build availability</div>
+            <div className="flex gap-2">
+              {(['supported', 'unsupported'] as CustomBuildView[]).map((view) => (
+                <button
+                  key={view}
+                  onClick={() => setCustomBuildView(view)}
+                  className={`px-3 py-1 text-xs rounded ${
+                    customBuildView === view ? 'bg-blue-700 text-white' : 'bg-gray-700 text-gray-400 hover:text-white'
+                  }`}
+                >
+                  {view === 'supported' ? 'Supported custom builds' : 'Unsupported custom builds'}
+                </button>
+              ))}
+            </div>
+            {customBuildView === 'unsupported' && (
+              <p className="text-xs text-gray-500 mt-2">
+                Unsupported repositories are listed for reference only and cannot be downloaded or executed by Avalon.
+              </p>
+            )}
+          </div>
+        )}
+
+        {visibleSearchResults.length > 0 && (
           <div className="space-y-2">
-            {searchResults.map((m) => (
-              <ModelRow key={m.id} model={m} onDownload={handleDownload} busyDl={busyDl} downloads={dl.downloads} keyToDlId={keyToDlId} format={modelFormat} />
+            {visibleSearchResults.map((m) => (
+              <ModelRow key={m.id} model={m} onDownload={handleDownload} busyDl={busyDl} downloads={dl.downloads} keyToDlId={keyToDlId} format={modelFormat} onSnapshotComplete={loadLocal} />
             ))}
           </div>
         )}
+        {modelFormat === CUSTOM_BUILD_FORMAT && searchResults.length > 0 &&
+          !searchResults.some((model) => (model.supported !== false) === (customBuildView === 'supported')) && (
+            <p className="text-gray-500 text-sm">
+              {customBuildView === 'supported'
+                ? 'No supported custom builds found.'
+                : 'No unsupported custom builds found.'}
+            </p>
+          )}
       </div>
     </div>
   );
@@ -279,7 +327,15 @@ function fmtSize(bytes: number): string {
 type SortKey = 'name' | 'size';
 type SortDir = 'asc' | 'desc';
 
-function ModelRow({ model, onDownload, busyDl, downloads, keyToDlId, format }: { model: HFModel; onDownload: (repo: string, file: string) => void; busyDl: Record<string, boolean>; downloads: Record<string, DownloadProgress>; keyToDlId: Record<string, string>; format: string }) {
+function ModelRow({ model, onDownload, busyDl, downloads, keyToDlId, format, onSnapshotComplete }: {
+  model: HFModel;
+  onDownload: (repo: string, file: string) => void;
+  busyDl: Record<string, boolean>;
+  downloads: Record<string, DownloadProgress>;
+  keyToDlId: Record<string, string>;
+  format: string;
+  onSnapshotComplete: () => void;
+}) {
   const [files, setFiles] = useState<ModelFile[]>([]);
   const [loadingFiles, setLoadingFiles] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>('name');
@@ -289,7 +345,7 @@ function ModelRow({ model, onDownload, busyDl, downloads, keyToDlId, format }: {
   const loadFiles = async () => {
     setLoadingFiles(true);
     try {
-      const d = await api.listModelFiles(model.id);
+      const d = await api.listModelFiles(model.id, format);
       setFiles(d.files);
     } catch { setFiles([]); }
     finally { setLoadingFiles(false); }
@@ -325,6 +381,13 @@ function ModelRow({ model, onDownload, busyDl, downloads, keyToDlId, format }: {
           <div className="flex items-center gap-2">
             <span className="font-medium text-sm">{model.id}</span>
             {format === 'openvino' && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-900 text-cyan-300">OpenVINO</span>}
+            {format === CUSTOM_BUILD_FORMAT && (
+              <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+                model.supported === false ? 'bg-gray-700 text-gray-400' : 'bg-blue-900 text-blue-300'
+              }`}>
+                {model.supported === false ? 'Unsupported' : 'Custom build'}
+              </span>
+            )}
           </div>
           <div className="text-xs text-gray-500 mt-0.5">
             {model.downloads.toLocaleString()} downloads · {model.likes} likes
@@ -336,6 +399,9 @@ function ModelRow({ model, onDownload, busyDl, downloads, keyToDlId, format }: {
           <button onClick={loadFiles} disabled={loadingFiles} className="px-2 py-0.5 text-xs bg-gray-700 rounded hover:bg-gray-600 disabled:opacity-50 flex items-center gap-1">
             {loadingFiles ? <><Spinner className="w-3 h-3" /> Loading...</> : files.length > 0 ? 'Refresh' : 'List files'}
           </button>
+        )}
+        {format === CUSTOM_BUILD_FORMAT && model.supported !== false && (
+          <CustomBuildDownloadButton modelId={model.id} onComplete={onSnapshotComplete} />
         )}
       </div>
       {files.length > 0 && (
@@ -374,6 +440,10 @@ function ModelRow({ model, onDownload, busyDl, downloads, keyToDlId, format }: {
                       </div>
                       <div className="text-[10px] text-gray-500 text-right mt-0.5">{prog.stage}</div>
                     </div>
+                  ) : format === CUSTOM_BUILD_FORMAT ? (
+                    <span className="shrink-0 text-[10px] text-gray-500">
+                      {model.supported === false ? 'Reference only' : 'Included in custom build download'}
+                    </span>
                   ) : (
                     <button
                       onClick={() => onDownload(model.id, f.name)}
@@ -393,6 +463,54 @@ function ModelRow({ model, onDownload, busyDl, downloads, keyToDlId, format }: {
         </div>
       )}
     </div>
+  );
+}
+
+function CustomBuildDownloadButton({ modelId, onComplete }: { modelId: string; onComplete: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [prog, setProg] = useState<DownloadProgress | null>(null);
+
+  const poll = (id: string) => {
+    api.downloadProgress(id)
+      .then((p) => {
+        setProg(p);
+        if (p.status !== 'done' && p.status !== 'error') {
+          setTimeout(() => poll(id), 500);
+        } else {
+          setBusy(false);
+          if (p.status === 'done') onComplete();
+        }
+      })
+      .catch(() => setBusy(false));
+  };
+
+  const handleDownload = async () => {
+    setBusy(true);
+    try {
+      const res = await api.downloadCrisperWhisperModel(modelId);
+      poll(res.download_id);
+    } catch (e: any) {
+      alert(e.message);
+      setBusy(false);
+    }
+  };
+
+  if (prog) {
+    return (
+      <div className="w-40">
+        <div className="bg-gray-700 rounded-full h-2 overflow-hidden">
+          <div className={`h-full rounded-full transition-all duration-300 ${prog.status === 'error' ? 'bg-red-500' : 'bg-blue-500'}`} style={{ width: `${prog.percent}%` }} />
+        </div>
+        <div className="text-[10px] text-gray-500 text-right mt-0.5">{prog.stage}</div>
+      </div>
+    );
+  }
+
+  return (
+    <button onClick={handleDownload} disabled={busy}
+      className="px-3 py-1 text-xs bg-blue-700 rounded hover:bg-blue-600 disabled:opacity-50 shrink-0">
+      {busy ? 'Downloading...' : 'Download custom build'}
+    </button>
   );
 }
 

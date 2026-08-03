@@ -11,11 +11,17 @@ import uuid
 import os
 import json
 import subprocess
+import socket
 import threading
 import time
 import httpx
 from fastapi.responses import FileResponse
-from progress import create_download, get as get_progress, list_active as list_active_downloads
+from progress import (
+    create_download,
+    get as get_progress,
+    list_active as list_active_downloads,
+    update as update_download_progress,
+)
 
 from gpu_detector import detect_gpus, check_driver_updates
 from driver_manager import (
@@ -44,6 +50,20 @@ _gateway_supervisor_stop = threading.Event()
 _gateway_supervisor_lock = threading.Lock()
 _gateway_stop_requested = False
 
+
+def _another_dashboard_is_listening() -> bool:
+    """Avoid mutating run state from a duplicate process before bind failure."""
+    port = int(os.environ.get("AVALON_PORT", "8771"))
+    for host in ("127.0.0.1", "::1"):
+        probe = socket.socket(socket.AF_INET6 if ":" in host else socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            probe.settimeout(0.2)
+            if probe.connect_ex((host, port)) == 0:
+                return True
+        finally:
+            probe.close()
+    return False
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -63,7 +83,8 @@ async def start_pairing_discovery():
         name="avalon-pairing-discovery",
         daemon=True,
     ).start()
-    recover_runs()
+    if not _another_dashboard_is_listening():
+        recover_runs()
     if os.environ.get("AVALON_AUTOSTART_GATEWAY", "true").lower() != "false":
         threading.Thread(
             target=_supervise_inference_gateway,
@@ -149,6 +170,10 @@ class DownloadModelRequest(BaseModel):
 
 
 class DownloadOVModelRequest(BaseModel):
+    repo_id: str
+
+
+class DownloadCrisperWhisperRequest(BaseModel):
     repo_id: str
 
 
@@ -240,17 +265,44 @@ class MultimodalRunRequest(BaseModel):
     case_id: str
 
 
+DOWNLOAD_WORKER_FLAG = "--avalon-download-worker"
+
+
+def _download_worker_command(download_id: str, kind: str, payload: Dict[str, Any]) -> List[str]:
+    worker = os.path.join(os.path.dirname(__file__), "download_worker.py")
+    if getattr(sys, "frozen", False):
+        # A PyInstaller one-file sidecar is not a Python interpreter and does
+        # not expose download_worker.py as a filesystem path. Re-enter the
+        # sidecar in its worker mode instead.
+        return [
+            sys.executable,
+            DOWNLOAD_WORKER_FLAG,
+            download_id,
+            kind,
+            json.dumps(payload),
+        ]
+    return [sys.executable, worker, download_id, kind, json.dumps(payload)]
+
+
 def start_download_worker(download_id: str, kind: str, payload: Dict[str, Any]) -> None:
     worker = os.path.join(os.path.dirname(__file__), "download_worker.py")
-    subprocess.Popen(
-        [sys.executable, worker, download_id, kind, json.dumps(payload)],
-        cwd=os.path.dirname(worker),
-        env=os.environ.copy(),
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
+    try:
+        subprocess.Popen(
+            _download_worker_command(download_id, kind, payload),
+            cwd=os.path.dirname(worker),
+            env=os.environ.copy(),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError as exc:
+        update_download_progress(
+            download_id,
+            status="error",
+            percent=0,
+            stage=f"Could not start download worker: {exc}",
+        )
 
 
 @app.get("/api/gpu/list")
@@ -329,6 +381,13 @@ async def download(req: DownloadModelRequest):
 async def download_ov(req: DownloadOVModelRequest):
     download_id = create_download(kind="openvino", repo_id=req.repo_id)
     start_download_worker(download_id, "openvino", {"repo_id": req.repo_id})
+    return {"download_id": download_id}
+
+
+@app.post("/api/models/download-crisperwhisper")
+async def download_crisperwhisper(req: DownloadCrisperWhisperRequest):
+    download_id = create_download(kind="crisperwhisper", repo_id=req.repo_id)
+    start_download_worker(download_id, "crisperwhisper", {"repo_id": req.repo_id})
     return {"download_id": download_id}
 
 
@@ -549,7 +608,9 @@ async def list_served_models():
             "owned_by": m.get("source", "local"),
         }
         for m in get_local_models()
-        if not m.get("is_draft") and m.get("serving_supported") is not False
+        if m.get("format") != "crisperwhisper"
+        and not m.get("is_draft")
+        and m.get("serving_supported") is not False
     ]
     return {"object": "list", "data": models}
 
@@ -726,10 +787,26 @@ async def pairing_remove(req: PairingRemoveRequest):
     return {"removed": pairing.remove_peer(req.peer_id)}
 
 
+def _run_download_worker() -> bool:
+    if len(sys.argv) < 2 or sys.argv[1] != DOWNLOAD_WORKER_FLAG:
+        return False
+    # download_worker.main() expects its download arguments at argv[1:].
+    sys.argv[1:] = sys.argv[2:]
+    from download_worker import main as download_worker_main
+
+    asyncio.run(download_worker_main())
+    return True
+
+
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(
-        app,
-        host=os.environ.get("AVALON_HOST", "127.0.0.1"),
-        port=int(os.environ.get("AVALON_PORT", "8771")),
-    )
+    if "--diagnose-crisperwhisper" in sys.argv:
+        from crisperwhisper_runtime import runtime_diagnostics
+        print(json.dumps(runtime_diagnostics(), sort_keys=True), flush=True)
+    elif not _run_download_worker():
+        import uvicorn
+
+        uvicorn.run(
+            app,
+            host=os.environ.get("AVALON_HOST", "127.0.0.1"),
+            port=int(os.environ.get("AVALON_PORT", "8771")),
+        )

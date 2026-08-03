@@ -5,7 +5,7 @@ import json
 import sys
 
 from driver_manager import download_driver
-from model_manager import download_model, download_openvino_model
+from model_manager import download_crisperwhisper_model, download_model, download_openvino_model
 from progress import update
 
 
@@ -22,6 +22,8 @@ async def main() -> None:
             )
         elif kind == "openvino":
             await asyncio.to_thread(download_openvino_model, payload["repo_id"], report)
+        elif kind == "crisperwhisper":
+            await asyncio.to_thread(download_crisperwhisper_model, payload["repo_id"], report)
         elif kind == "driver":
             await download_driver(payload["tag"], payload["backend"], report)
         else:

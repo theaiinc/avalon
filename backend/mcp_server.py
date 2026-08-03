@@ -55,6 +55,12 @@ def download_openvino_model(repo_id: str) -> Dict[str, Any]:
 
 
 @mcp.tool()
+def download_crisperwhisper_model(repo_id: str) -> Dict[str, Any]:
+    """Start downloading an official CrisperWhisper Transformers STT snapshot."""
+    return _client().download_crisperwhisper_model(repo_id)
+
+
+@mcp.tool()
 def download_progress(download_id: str) -> Dict[str, Any]:
     """Get progress for a model or driver download."""
     return _client().download_progress(download_id)

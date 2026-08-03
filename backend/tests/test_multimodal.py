@@ -56,6 +56,23 @@ def test_builtin_image_profile_is_allowed_but_other_modalities_are_rejected():
         multimodal.validate_profile({"modality": "tts", "mode": "builtin"})
 
 
+def test_builtin_crisper_stt_requires_dedicated_model_format():
+    profile = multimodal.validate_profile({
+        "modality": "stt",
+        "mode": "builtin",
+        "model_path": "/tmp/crisper",
+        "model_format": "crisperwhisper",
+    })
+    assert profile["model_format"] == "crisperwhisper"
+    with pytest.raises(ValueError, match="crisperwhisper"):
+        multimodal.validate_profile({
+            "modality": "stt",
+            "mode": "builtin",
+            "model_path": "/tmp/arbitrary-transformers",
+            "model_format": "safetensors",
+        })
+
+
 def test_artifact_ingestion_validates_image_and_limits(tmp_path, monkeypatch):
     monkeypatch.setattr(multimodal, "ARTIFACT_DIR", tmp_path)
     artifact = multimodal._store_artifact("run", {

@@ -6,6 +6,11 @@ const http = require('node:http');
 const os = require('node:os');
 const crypto = require('node:crypto');
 
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+  process.exit(0);
+}
+
 // The dashboard does not need GPU compositing; avoid Electron GPU crashes on
 // systems where the available graphics process is unstable.
 app.disableHardwareAcceleration();
@@ -19,6 +24,10 @@ let tray;
 let backendProcess;
 let ownsBackend = false;
 let stopping = false;
+
+app.on('second-instance', () => {
+  showMainWindow();
+});
 
 function apiKey() {
   const file = path.join(app.getPath('userData'), 'api-key');

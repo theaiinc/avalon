@@ -51,6 +51,9 @@ class DashboardClient:
     def download_openvino_model(self, repo_id: str) -> Any:
         return self.post("/api/models/download-openvino", {"repo_id": repo_id})
 
+    def download_crisperwhisper_model(self, repo_id: str) -> Any:
+        return self.post("/api/models/download-crisperwhisper", {"repo_id": repo_id})
+
     def download_progress(self, download_id: str) -> Any:
         return self.get(f"/api/downloads/progress/{download_id}")
 
@@ -164,7 +167,11 @@ class DashboardClient:
         )
         resolved_path = model_path or model_info.get("path", "")
         resolved_model = model_info.get("repo_id") or model_id
-        selected_mode = mode or ("builtin" if modality == "imagegen" else "http")
+        selected_mode = mode or (
+            "builtin"
+            if modality == "imagegen" or model_info.get("format") == "crisperwhisper"
+            else "http"
+        )
         adapter_paths = {
             "tts": "audio/speech",
             "stt": "audio/transcriptions",
@@ -177,6 +184,7 @@ class DashboardClient:
             "mode": selected_mode,
             "model": resolved_model,
             "model_path": resolved_path,
+            "model_format": model_info.get("format", ""),
             "url": (
                 f"{self.base_url.replace(':8771', ':8787')}/v1/{adapter_paths[modality]}"
                 if selected_mode == "http" else None

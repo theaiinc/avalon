@@ -6,6 +6,7 @@ PyInstaller on the target runner.
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 import sys
@@ -49,10 +50,10 @@ def build(name: str, script: str) -> None:
             "--exclude-module",
             "openvino_genai",
         ]
-    elif script == "main.py":
-        # The dashboard sidecar delegates inference to avalon-gateway. Keep
-        # optional inference stacks out of this process so Windows/Linux do
-        # not analyze and bundle OpenVINO twice.
+    if script == "main.py":
+        # Keep the optional OpenVINO inference stack out of this process.
+        # Built-in multimodal STT runs in the dashboard sidecar, so its
+        # separate Transformers/Torch runtime must remain bundled here.
         command[command.index(str(BACKEND / script)):command.index(str(BACKEND / script))] = [
             "--exclude-module",
             "openvino",
@@ -60,10 +61,72 @@ def build(name: str, script: str) -> None:
             "openvino_genai",
             "--exclude-module",
             "optimum",
-            "--exclude-module",
+        ]
+    if script in {"main.py", "api_server.py"}:
+        # multimodal.py imports the STT runtime lazily. Collect it explicitly
+        # in every sidecar that can execute a built-in multimodal run.
+        command[command.index(str(BACKEND / script)):command.index(str(BACKEND / script))] += [
+            "--collect-all",
+            "crisperwhisper",
+            "--collect-all",
+            "av",
+            "--hidden-import",
+            "crisperwhisper.transformers_engine",
+            "--hidden-import",
+            "crisperwhisper_runtime",
+            "--hidden-import",
+            "av",
+            "--hidden-import",
+            "torch",
+            "--hidden-import",
             "transformers",
+            "--hidden-import",
+            "accelerate",
         ]
     subprocess.run(command, cwd=ROOT, check=True)
+
+
+def verify_stt_runtime() -> None:
+    """Fail the macOS build if either frozen sidecar cannot import STT."""
+    if sys.platform != "darwin":
+        return
+    for name in ("avalon-backend", "avalon-gateway"):
+        executable = OUTPUT / name
+        result = subprocess.run(
+            [str(executable), "--diagnose-crisperwhisper"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=180,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"Packaged {name} CrisperWhisper diagnostic exited "
+                f"with code {result.returncode}: {result.stderr.strip()}"
+            )
+        try:
+            diagnostics = json.loads(result.stdout)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                f"Packaged {name} CrisperWhisper diagnostic did not return JSON: "
+                f"{result.stdout.strip()}"
+            ) from exc
+        if not diagnostics.get("available"):
+            raise RuntimeError(
+                f"Packaged {name} CrisperWhisper runtime is unavailable: "
+                f"{diagnostics.get('error', diagnostics)}"
+            )
+        if not diagnostics.get("audio_decoder", {}).get("available"):
+            raise RuntimeError(
+                f"Packaged {name} WebM/Opus decoder is unavailable: "
+                f"{diagnostics.get('audio_decoder', {}).get('error', diagnostics)}"
+            )
+        print(
+            f"Verified packaged {name} CrisperWhisper Transformers runtime "
+            f"({diagnostics.get('machine', 'unknown')})",
+            flush=True,
+        )
 
 
 def main() -> None:
@@ -76,6 +139,7 @@ def main() -> None:
             old.unlink()
     build("avalon-backend", "main.py")
     build("avalon-gateway", "api_server.py")
+    verify_stt_runtime()
     readme = OUTPUT / "README.md"
     if readme.exists():
         readme.unlink()

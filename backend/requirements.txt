@@ -11,3 +11,5 @@ mcp
 cryptography>=42.0.0
 keyring>=25.0.0
 zeroconf>=0.131.0
+crisperwhisper[transformers]>=2.0.1
+av>=14.0.0

@@ -57,6 +57,9 @@ export interface HFModel {
   likes: number;
   pipeline_tag: string;
   last_modified: string;
+  format?: 'gguf' | 'openvino' | 'crisperwhisper';
+  supported?: boolean;
+  support_reason?: string;
 }
 
 export interface ModelFile {
@@ -74,6 +77,8 @@ export interface LocalModel {
   format?: string;
   openvino_path?: string | null;
   capabilities?: string[];
+  serving_supported?: boolean;
+  support_reason?: string;
 }
 
 export interface BenchmarkRun {
@@ -117,6 +122,7 @@ export interface MultimodalProfile {
   mode: 'local' | 'http' | 'builtin';
   model: string;
   model_path?: string;
+  model_format?: string;
   executable_id?: string;
   url?: string;
   allow_private_network?: boolean;
@@ -162,6 +168,9 @@ export interface MultimodalRun {
     metrics: Record<string, number>;
     artifacts: MultimodalArtifact[];
     transcript?: string;
+    words?: { word: string; start?: number; end?: number }[];
+    audio_duration_sec?: number | null;
+    transcript_mode?: string;
     assertions?: { passed: boolean; checks: { name: string; passed: boolean }[] };
   };
 }

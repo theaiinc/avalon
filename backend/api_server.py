@@ -1231,6 +1231,10 @@ def _served_model_catalog() -> List[Dict[str, Any]]:
     openvino_device = _server_config.get("openvino_device") or "NPU"
     for model in get_local_models():
         fmt = model.get("format", "gguf")
+        if fmt == "crisperwhisper":
+            # Speech models use the multimodal STT runner, never the LLM
+            # gateway's GGUF/OpenVINO chat execution path.
+            continue
         runtime = "openvino" if fmt == "openvino" else "gguf"
         driver = openvino_device if fmt == "openvino" else gguf_backend
         model_file = _served_model_file(model)
@@ -1709,7 +1713,10 @@ def _start_llama_server(port: int, model_path: str, device: str = "cuda", gpu_in
 # --- Standalone OpenVINO server ---
 
 if __name__ == "__main__":
-    if "--serve" in sys.argv or "--serve-ov" in sys.argv:
+    if "--diagnose-crisperwhisper" in sys.argv:
+        from crisperwhisper_runtime import runtime_diagnostics
+        print(json.dumps(runtime_diagnostics(), sort_keys=True), flush=True)
+    elif "--serve" in sys.argv or "--serve-ov" in sys.argv:
         port = int(os.environ.get("LLAMA_DASH_API_PORT", os.environ.get("OV_API_PORT", "8787")))
         mode = os.environ.get("LLAMA_DASH_API_MODE", "openai")
         device = os.environ.get("LLAMA_DASH_API_DEVICE", os.environ.get("OV_API_DEVICE", ""))

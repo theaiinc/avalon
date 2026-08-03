@@ -8,6 +8,14 @@ from config import MODELS_DIR
 
 api = HfApi()
 
+CRISPERWHISPER_FORMAT = "crisperwhisper"
+CRISPERWHISPER_REPOS = {
+    "nyralabs/CrisperWhisper2.0_large",
+    "nyralabs/CrisperWhisper2.0_medium",
+    "nyralabs/CrisperWhisper2.0_turbo",
+    "nyralabs/CrisperWhisper2.0_small",
+}
+
 
 def _infer_capabilities(text: str, declared=None) -> List[str]:
     if declared:
@@ -27,13 +35,23 @@ def _infer_capabilities(text: str, declared=None) -> List[str]:
 
 
 def search_models(query: str, limit: int = 20, model_format: str = "gguf") -> List[Dict]:
-    tag = "gguf" if model_format == "gguf" else "openvino"
-    models = api.list_models(
-        search=query,
-        filter=tag,
-        sort="downloads",
-        limit=limit,
-    )
+    if model_format == CRISPERWHISPER_FORMAT:
+        models = [
+            model for model in api.list_models(
+                search=query or "CrisperWhisper",
+                sort="downloads",
+                limit=max(limit, len(CRISPERWHISPER_REPOS)),
+            )
+            if model.modelId in CRISPERWHISPER_REPOS
+        ]
+    else:
+        tag = "gguf" if model_format == "gguf" else "openvino"
+        models = api.list_models(
+            search=query,
+            filter=tag,
+            sort="downloads",
+            limit=limit,
+        )
     return [
         {
             "id": m.modelId,
@@ -44,6 +62,7 @@ def search_models(query: str, limit: int = 20, model_format: str = "gguf") -> Li
             "pipeline_tag": getattr(m, "pipeline_tag", ""),
             "last_modified": m.lastModified.isoformat() if m.lastModified else "",
             "format": model_format,
+            "supported": model_format != CRISPERWHISPER_FORMAT or m.modelId in CRISPERWHISPER_REPOS,
         }
         for m in models
     ]
@@ -54,6 +73,8 @@ def list_files(repo_id: str, model_format: str = "gguf") -> List[Dict]:
         files = api.list_repo_files(repo_id)
         if model_format == "gguf":
             matched = [f for f in files if f.endswith(".gguf")]
+        elif model_format == CRISPERWHISPER_FORMAT:
+            matched = [f for f in files if not f.endswith("/") and f != "model.json"]
         else:
             matched = [f for f in files if f.endswith(".xml") or f.endswith(".bin")]
         path_infos = api.get_paths_info(repo_id, paths=matched)
@@ -84,7 +105,24 @@ def get_local_models() -> List[Dict]:
             gguf_files = list(entry_path.rglob("*.gguf"))
             ov_xmls = list(entry_path.glob("openvino_*.xml"))
 
-            if ov_xmls:
+            if meta.get("format") == CRISPERWHISPER_FORMAT:
+                file_names = [
+                    str(path.relative_to(entry_path))
+                    for path in entry_path.rglob("*")
+                    if path.is_file() and path.name != "model.json"
+                ]
+                models.append({
+                    "id": entry,
+                    "repo_id": meta.get("repo_id", entry),
+                    "files": sorted(file_names),
+                    "path": str(entry_path),
+                    "size": sum(f.stat().st_size for f in entry_path.rglob("*") if f.is_file()),
+                    "format": CRISPERWHISPER_FORMAT,
+                    "openvino_path": None,
+                    "serving_supported": False,
+                    "capabilities": capabilities or ["stt"],
+                })
+            elif ov_xmls:
                 models.append({
                     "id": entry,
                     "repo_id": meta.get("repo_id", entry),
@@ -191,6 +229,44 @@ def download_openvino_model(repo_id: str, on_progress: Optional[Callable] = None
         "repo_id": repo_id,
         "filename": "",
         "path": str(model_dir),
+    }
+
+
+def download_crisperwhisper_model(repo_id: str, on_progress: Optional[Callable] = None) -> Dict:
+    if repo_id not in CRISPERWHISPER_REPOS:
+        raise ValueError("Only official Nyra Labs CrisperWhisper 2.0 repositories are supported")
+    from huggingface_hub import snapshot_download
+
+    safe_name = repo_id.replace("/", "_")
+    model_dir = MODELS_DIR / safe_name
+    model_dir.mkdir(parents=True, exist_ok=True)
+    if on_progress:
+        on_progress(status="downloading", percent=5, stage="Downloading CrisperWhisper Transformers model...")
+    # Do not selectively fetch files: the official Transformers loader needs
+    # the complete snapshot, including tokenizer/configuration sidecars.
+    snapshot_download(repo_id=repo_id, local_dir=str(model_dir))
+    files = sorted(
+        str(path.relative_to(model_dir))
+        for path in model_dir.rglob("*")
+        if path.is_file()
+    )
+    metadata = {
+        "repo_id": repo_id,
+        "files": files,
+        "format": CRISPERWHISPER_FORMAT,
+        "capabilities": ["stt"],
+        "serving_supported": False,
+    }
+    with open(model_dir / "model.json", "w") as f:
+        json.dump(metadata, f, indent=2)
+    if on_progress:
+        on_progress(status="done", percent=100, stage="Done")
+    return {
+        "id": safe_name,
+        "repo_id": repo_id,
+        "filename": "",
+        "path": str(model_dir),
+        "format": CRISPERWHISPER_FORMAT,
     }
 
 

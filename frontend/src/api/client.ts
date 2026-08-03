@@ -53,6 +53,12 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ repo_id }),
     }),
+  downloadCrisperWhisperModel: (repo_id: string) =>
+    fetchJSON<DownloadResponse>(`${BASE}/models/download-crisperwhisper`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ repo_id }),
+    }),
   downloadProgress: (download_id: string) =>
     fetchJSON<DownloadProgress>(`${BASE}/downloads/progress/${encodeURIComponent(download_id)}`),
   listActiveDownloads: () =>
