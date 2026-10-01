@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { api } from '../api/client';
 import type { LocalModel, MultimodalCase, MultimodalModality, MultimodalProfile, MultimodalRun } from '../types';
+import { isDesktopShell } from '../desktop';
 
 const modalities: { value: MultimodalModality; label: string }[] = [
   { value: 'tts', label: 'TTS' },
@@ -65,7 +66,7 @@ function gatewayAdapterUrl(modality: MultimodalModality): string {
 
 function artifactUrl(url: string): string {
   if (/^https?:\/\//i.test(url)) return url;
-  const base = window.location.protocol === 'file:' ? 'http://127.0.0.1:8771' : '';
+  const base = isDesktopShell ? 'http://127.0.0.1:8771' : '';
   return `${base}${url.startsWith('/') ? url : `/${url}`}`;
 }
 

@@ -1,4 +1,4 @@
-"""Build native Avalon Python sidecars for Electron packaging.
+"""Build native Avalon Python sidecars for desktop (Tauri) packaging.
 
 Run this from the repository root after installing backend requirements and
 PyInstaller on the target runner.

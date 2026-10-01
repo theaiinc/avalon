@@ -3,6 +3,7 @@ import { api } from '../api/client';
 import Spinner from '../components/Spinner';
 import type { LocalModel, LocalDriver } from '../types';
 import { AgentAccessPanel } from './AgentsPage';
+import { isDesktopShell } from '../desktop';
 
 type ServerStatus = 'stopped' | 'running' | 'starting' | 'error';
 type ApiMode = 'openai' | 'anthropic' | 'both';
@@ -99,7 +100,7 @@ export default function APIPage() {
   const [showResourceWarning, setShowResourceWarning] = useState(false);
 
   const dashboardBase = runtime?.dashboardUrl
-    || (window.location.protocol === 'file:' ? 'http://127.0.0.1:8771' : '');
+    || (isDesktopShell ? 'http://127.0.0.1:8771' : '');
   const gatewayBase = runtime?.gatewayUrl || `http://127.0.0.1:${port}`;
   const activeModels = servedModels.filter((model) => Boolean(model.current_request));
 
@@ -167,6 +168,11 @@ export default function APIPage() {
     } catch { }
   }, [dashboardBase, runtime]);
 
+  // One-time loads. These must not share an effect with the poller below:
+  // setRuntime() creates a new `runtime`, which recreates refreshStatus, and
+  // an effect keyed on refreshStatus would re-fetch the runtime config —
+  // an infinite render/fetch loop (pegged the renderer and network process
+  // and starved every other request while this page was open).
   useEffect(() => {
     window.avalon?.getRuntimeConfig().then(setRuntime).catch(() => {});
     api.listLocalModels().then((r) => {
@@ -190,6 +196,10 @@ export default function APIPage() {
     api.listDrivers().then(data => {
       setDrivers((data.local || []).filter((d: LocalDriver) => d.backend !== 'npu' && d.llama_bench_path));
     }).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
     refreshStatus();
     const timer = setInterval(refreshStatus, 1000);
     return () => clearInterval(timer);
@@ -803,7 +813,7 @@ function QuickTest({
   const [prompt, setPrompt] = useState('What is the meaning of life?');
   const [response, setResponse] = useState('');
   const [loading, setLoading] = useState(false);
-  const requestBase = window.location.protocol === 'file:' ? dashboardBase : '';
+  const requestBase = isDesktopShell ? dashboardBase : '';
 
   const testOpenAI = async () => {
     setLoading(true);

@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
-  // Electron loads the packaged renderer with file:// URLs.
+  // Relative asset paths for the Tauri bundle (tauri:// origin).
   base: './',
   server: {
     port: 5173,

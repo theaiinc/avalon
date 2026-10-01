@@ -34,8 +34,8 @@ jobs:
             arch: x64
             runner: ubuntu-22.04
     runs-on: ${{ matrix.runner }}
-    # Linux electron-builder can take longer than the macOS and Windows
-    # packaging jobs, especially while downloading AppImage tooling.
+    # The release Rust build plus the large PyInstaller sidecars make Linux
+    # the slowest job; keep the watchdog window above this timeout.
     timeout-minutes: 45
     defaults:
       run:
@@ -66,29 +66,56 @@ jobs:
       - name: Build native Python sidecars
         run: python packaging/build_sidecars.py
 
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: frontend/src-tauri
+
+      - name: Install Linux webview dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
 
-      - name: Build Electron artifacts
+      # CI builds are ad-hoc signed on macOS (no signing identity configured).
+      # AppImage is skipped on Linux: bundling the large sidecars into it
+      # exceeded the job budget in past releases; .deb is fast.
+      - name: Build Tauri bundles
         working-directory: frontend
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: "false"
-          # Keep the Linux archive below GitHub's 2 GiB release-asset limit.
-          ELECTRON_BUILDER_COMPRESSION_LEVEL: "5"
-        run: npm run dist
-
-      - name: Verify platform artifacts
-        working-directory: frontend/dist
         run: |
           case "${{ matrix.platform }}" in
-            macos) test -n "$(find . -maxdepth 1 -type f \( -name '*.dmg' -o -name '*.zip' \) -print -quit)" ;;
-            windows) test -n "$(find . -maxdepth 1 -type f \( -name '*.exe' -o -name '*.zip' \) -print -quit)" ;;
-            linux) test -n "$(find . -maxdepth 1 -type f \( -name '*.AppImage' -o -name '*.tar.gz' \) -print -quit)" ;;
+            macos) bundles=app,dmg ;;
+            windows) bundles=nsis ;;
+            linux) bundles=deb ;;
           esac
+          npm run tauri -- build --bundles "$bundles"
+
+      - name: Collect platform artifacts
+        working-directory: frontend
+        run: |
+          mkdir -p release
+          bundle=src-tauri/target/release/bundle
+          version="$(node -p "require('./package.json').version")"
+          case "${{ matrix.platform }}" in
+            macos)
+              cp "$bundle"/dmg/*.dmg release/
+              ditto -c -k --keepParent "$bundle/macos/Avalon.app" "release/Avalon-${version}-macos-${{ matrix.arch }}.zip"
+              ;;
+            windows) cp "$bundle"/nsis/*.exe release/ ;;
+            linux) cp "$bundle"/deb/*.deb release/ ;;
+          esac
+          ls -la release
+          test -n "$(find release -maxdepth 1 -type f -print -quit)"
 
       - name: Generate checksums
-        working-directory: frontend/dist
+        working-directory: frontend/release
         run: |
           python - <<'PY'
           import hashlib
@@ -105,13 +132,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: avalon-${{ matrix.platform }}-${{ matrix.arch }}
-          path: |
-            frontend/dist/*.dmg
-            frontend/dist/*.zip
-            frontend/dist/*.exe
-            frontend/dist/*.AppImage
-            frontend/dist/*.tar.gz
-            frontend/dist/SHA256SUMS.txt
+          path: frontend/release/*
           if-no-files-found: error
           retention-days: 14
 
@@ -146,20 +167,6 @@ jobs:
           pattern: avalon-*
           merge-multiple: true
 
-      - name: Split oversized Linux archive
-        working-directory: release-assets
-        shell: bash
-        run: |
-          linux_archive="$(find . -maxdepth 1 -type f -name '*linux*.tar.gz' -print -quit)"
-          if [ -n "$linux_archive" ] && [ "$(stat -c '%s' "$linux_archive")" -ge 2140000000 ]; then
-            split -b 1900m -d -a 2 "$linux_archive" "${linux_archive}.part-"
-            rm "$linux_archive"
-            printf '%s\n' \
-              'Linux archive parts must be concatenated before extraction:' \
-              "cat ${linux_archive#./}.part-* > ${linux_archive#./}" \
-              > LINUX_ARCHIVE_PARTS.txt
-          fi
-
       - name: Create release manifest
         shell: bash
         run: |
@@ -191,6 +198,6 @@ jobs:
           files: release-assets/*
           generate_release_notes: true
           body: |
-            Avalon desktop builds include the Electron application and native Python sidecars.
+            Avalon desktop builds include the Tauri application and native Python sidecars.
 
             Model weights are not bundled. Download models after installation; they are stored in the platform app-data directory.

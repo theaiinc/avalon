@@ -9,4 +9,4 @@ frontend/node_modules/.vite/
 backend/.venv/
 backend/api_server_stderr.log
 backend/api_server_stdout.log
-frontend/dist
+frontend/distfrontend/runtime/

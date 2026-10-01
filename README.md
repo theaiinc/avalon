@@ -25,17 +25,26 @@ npm install
 npm run dev
 ```
 
-## Electron desktop app
+## Desktop app (Tauri)
 
 The desktop app keeps dashboard controls on loopback and exposes only the
-authenticated LLM gateway to the LAN:
+authenticated LLM gateway to the LAN. It needs a Rust toolchain
+(`rustup`) in addition to Node:
 
 ```bash
 cd frontend
-npm run dev:app       # Vite renderer + Electron shell
-npm run pack          # unsigned unpacked desktop executable
-npm run dist          # unsigned platform installer and portable archive
+npm run dev:app       # Vite + Tauri shell (uses backend/.venv)
+npm run pack          # app bundle only (macOS .app)
+npm run dist          # all installers for the host platform
 ```
+
+On macOS, sign local builds with a stable identity
+(`APPLE_SIGNING_IDENTITY="Developer ID Application: …" npm run pack`).
+Ad-hoc signatures change on every build, and macOS then blocks the new build
+from reading the previous build's app data until a privacy prompt is
+accepted. Shell and backend logs are in `~/Library/Logs/com.avalon.llamadash/`.
+Closing the window destroys the webview; the tray, dashboard backend, and
+gateway keep running.
 
 The packaged app stores models and its generated API key under the platform
 application-data directory. The API page displays the LAN gateway URL and

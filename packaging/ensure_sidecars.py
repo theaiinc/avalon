@@ -1,4 +1,4 @@
-"""Ensure native Python sidecars exist before Electron packaging."""
+"""Ensure native Python sidecars exist before desktop (Tauri) packaging."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ def main() -> None:
     missing = [path.name for path in EXPECTED if not path.is_file()]
     if not missing:
         return
-    print(f"Building missing Electron sidecars: {', '.join(missing)}", flush=True)
+    print(f"Building missing desktop sidecars: {', '.join(missing)}", flush=True)
     subprocess.run(
         [sys.executable, str(Path(__file__).with_name("build_sidecars.py"))],
         cwd=ROOT,

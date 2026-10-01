@@ -1,6 +1,7 @@
 import type { GPU, DriverRelease, LocalDriver, ActiveDriver, HFModel, ModelFile, LocalModel, DownloadProgress, DownloadResponse, BenchmarkResult, BenchmarkListItem, SystemStats, PCLink, PCLinkTestResult, PairingCode, PairingPeer, DiscoveredDevice, MultimodalProfile, MultimodalCase, MultimodalRun } from '../types';
+import { isDesktopShell } from '../desktop';
 
-const BASE = window.location.protocol === 'file:' ? 'http://127.0.0.1:8771/api' : '/api';
+const BASE = isDesktopShell ? 'http://127.0.0.1:8771/api' : '/api';
 
 async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
